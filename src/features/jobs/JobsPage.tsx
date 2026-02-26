@@ -1,0 +1,451 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { PageHeader } from "../../components/layout/PageHeader";
+import { Card } from "../../components/ui/Card";
+import { Table } from "../../components/ui/Table";
+import { Badge } from "../../components/ui/Badge";
+import { Modal } from "../../components/ui/Modal";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { useAuth } from "../../lib/auth/AuthContext";
+import { apiGet, apiPost, apiPostForm } from "../../lib/api/client";
+import { formatBytes, formatTime, sanitizePath, summarizeOutput } from "../../lib/format";
+import type { AllowedCommand, Agent, Artifact, Job, JobCreateRequest, JobCreateResponse, JobExecution, JobWave, RolloutProfile } from "../../types/api";
+import { useToast } from "../../components/ui/Toast";
+
+const COMMAND_TEMPLATES = [
+  { id: "run_ps_update", label: "Windows Update Scan", command: "UsoClient StartScan" },
+  { id: "run_create_dir", label: "Criar Pasta", command: "New-Item -ItemType Directory -Force -Path 'C:\\ProgramData\\MonitoringAgent\\work'" },
+];
+
+type JobAction = "run_command" | "download_artifact" | "download_and_execute";
+
+function poll(intervalMs: number) {
+  return () => (document.hidden ? false : intervalMs);
+}
+
+function autoSilentCommand(fileName?: string): string {
+  const lower = (fileName || "").toLowerCase();
+  if (lower.endsWith(".msi")) return "msiexec /i {{artifact_path}} /qn /norestart";
+  if (lower.endsWith(".ps1")) return "powershell -NoProfile -ExecutionPolicy Bypass -File {{artifact_path}}";
+  if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return "cmd /c {{artifact_path}} /quiet";
+  if (lower.endsWith(".exe")) return "Start-Process -FilePath {{artifact_path}} -ArgumentList '/S','/quiet','/norestart' -Wait";
+  return "{{artifact_path}} /quiet /norestart";
+}
+
+export function JobsPage() {
+  const auth = useAuth();
+  const toast = useToast();
+  const headers = auth.getAuthHeadersState();
+
+  const [name, setName] = useState("job-manual");
+  const [action, setAction] = useState<JobAction>("run_command");
+  const [command, setCommand] = useState("echo hello from ui");
+  const [timeoutSeconds, setTimeoutSeconds] = useState(60);
+  const [rolloutProfile, setRolloutProfile] = useState<RolloutProfile>("balanced");
+  const [manualBatch, setManualBatch] = useState(false);
+  const [batchSize, setBatchSize] = useState(50);
+  const [batchDelaySeconds, setBatchDelaySeconds] = useState(15);
+  const [targetPath, setTargetPath] = useState("");
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null);
+  const [selectedAllowedCommandId, setSelectedAllowedCommandId] = useState<number | null>(null);
+  const [useDirectCommand, setUseDirectCommand] = useState(true);
+  const [jobFilter, setJobFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [selectedExecution, setSelectedExecution] = useState<JobExecution | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const agentsQuery = useQuery({
+    queryKey: ["jobs-agents", headers.accessToken],
+    queryFn: () => apiGet<Agent[]>("/agents?limit=400", headers),
+    refetchInterval: poll(15_000),
+  });
+
+  const jobsQuery = useQuery({
+    queryKey: ["jobs-list", headers.accessToken],
+    queryFn: () => apiGet<Job[]>("/jobs?limit=300", headers),
+    refetchInterval: poll(15_000),
+  });
+
+  const artifactsQuery = useQuery({
+    queryKey: ["jobs-artifacts", headers.accessToken],
+    queryFn: () => apiGet<Artifact[]>("/artifacts?limit=200", headers),
+    refetchInterval: poll(15_000),
+  });
+
+  const allowedCommandsQuery = useQuery({
+    queryKey: ["allowed-commands", headers.accessToken],
+    queryFn: () => apiGet<AllowedCommand[]>("/commands?limit=300", headers),
+    refetchInterval: poll(15_000),
+  });
+
+  const executionsQuery = useQuery({
+    queryKey: ["job-executions", selectedJob?.id, headers.accessToken],
+    queryFn: () => apiGet<JobExecution[]>(`/jobs/${selectedJob?.id ?? 0}/executions?limit=500`, headers),
+    enabled: Boolean(selectedJob),
+    refetchInterval: selectedJob ? poll(5_000) : false,
+  });
+
+  const wavesQuery = useQuery({
+    queryKey: ["job-waves", selectedJob?.id, headers.accessToken],
+    queryFn: () => apiGet<JobWave[]>(`/jobs/${selectedJob?.id ?? 0}/waves`, headers),
+    enabled: Boolean(selectedJob),
+    refetchInterval: selectedJob ? poll(5_000) : false,
+  });
+
+  const filteredJobs = useMemo(() => {
+    const list = jobsQuery.data ?? [];
+    return list.filter((job) => {
+      const matchesStatus = statusFilter === "all" || job.status === statusFilter;
+      const needle = jobFilter.trim().toLowerCase();
+      const matchesText = !needle || `${job.id} ${job.name} ${job.action_type}`.toLowerCase().includes(needle);
+      return matchesStatus && matchesText;
+    });
+  }, [jobsQuery.data, jobFilter, statusFilter]);
+
+  const needsArtifact = action === "download_artifact" || action === "download_and_execute";
+  const needsCommand = action === "run_command" || action === "download_and_execute";
+  const role = auth.role ?? "admin";
+  const forceAllowList = role === "support";
+
+  useEffect(() => {
+    if (role === "support" && action === "download_and_execute") {
+      setAction("run_command");
+    }
+  }, [role, action]);
+
+  function toggleTarget(agentId: string, checked: boolean) {
+    setSelectedTargets((prev) => {
+      if (checked) return [...new Set([...prev, agentId])];
+      return prev.filter((id) => id !== agentId);
+    });
+  }
+
+  function applyTemplate(templateId: string) {
+    const template = COMMAND_TEMPLATES.find((item) => item.id === templateId);
+    if (template) setCommand(template.command);
+  }
+
+  async function createJob() {
+    try {
+      if (!name.trim()) throw new Error("Informe um nome para o job.");
+      if (selectedTargets.length === 0) throw new Error("Selecione ao menos um target.");
+      if (needsArtifact && !selectedArtifactId) throw new Error("Selecione um artefato.");
+      if (needsCommand && !forceAllowList && useDirectCommand && !command.trim()) {
+        throw new Error("Informe o comando.");
+      }
+      if (needsCommand && (forceAllowList || !useDirectCommand) && !selectedAllowedCommandId) {
+        throw new Error("Selecione um comando permitido.");
+      }
+
+      const payload: JobCreateRequest = {
+        name: name.trim(),
+        action_type: action,
+        target_agent_ids: selectedTargets,
+        timeout_seconds: timeoutSeconds,
+        rollout_profile: rolloutProfile,
+      };
+
+      if (needsArtifact && selectedArtifactId) {
+        payload.artifact_id = selectedArtifactId;
+      }
+      if (needsArtifact && targetPath.trim()) {
+        payload.target_path = sanitizePath(targetPath.trim());
+      }
+      if (needsCommand) {
+        if (forceAllowList || !useDirectCommand) {
+          if (selectedAllowedCommandId) payload.command_id = selectedAllowedCommandId;
+        } else {
+          payload.command = command.trim();
+          if (selectedAllowedCommandId) payload.command_id = selectedAllowedCommandId;
+        }
+      }
+      if (manualBatch) {
+        payload.batch_size = batchSize;
+        payload.batch_delay_seconds = batchDelaySeconds;
+      }
+
+      const response = await apiPost<JobCreateResponse>("/jobs", payload, headers);
+      toast.showSuccess(`Job criado com sucesso (id ${response.job_id}).`);
+      await jobsQuery.refetch();
+    } catch (error) {
+      toast.showError(error instanceof Error ? error.message : "Falha ao criar job.");
+    }
+  }
+
+  async function uploadArtifact(file: File | null) {
+    if (!file) {
+      toast.showError("Selecione um arquivo para upload.");
+      return;
+    }
+    try {
+      setUploading(true);
+      const form = new FormData();
+      form.append("file", file);
+      const artifact = await apiPostForm<Artifact>("/artifacts", form, headers);
+      setSelectedArtifactId(artifact.id);
+      toast.showSuccess(`Artefato enviado: ${artifact.file_name}`);
+      await artifactsQuery.refetch();
+    } catch (error) {
+      toast.showError(error instanceof Error ? error.message : "Falha no upload.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="page-content">
+      <PageHeader title="Jobs" subtitle="Rollout em ondas, execução e rastreabilidade operacional" />
+
+      <div className="two-col-grid">
+        <Card title="Criar Job">
+          <div className="form-grid">
+            <label>
+              Nome
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label>
+              Ação
+              <select value={action} onChange={(event) => setAction(event.target.value as JobAction)}>
+                <option value="run_command">run_command</option>
+                <option value="download_artifact">download_artifact</option>
+                {role === "admin" ? <option value="download_and_execute">download_and_execute</option> : null}
+              </select>
+            </label>
+            <label>
+              Timeout (s)
+              <input type="number" min={10} value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value || 60))} />
+            </label>
+            <label>
+              Perfil rollout
+              <select value={rolloutProfile} onChange={(event) => setRolloutProfile(event.target.value as RolloutProfile)}>
+                <option value="safe">safe</option>
+                <option value="balanced">balanced</option>
+                <option value="fast">fast</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="row">
+            <label className="check-inline">
+              <input type="checkbox" checked={manualBatch} onChange={(event) => setManualBatch(event.target.checked)} />
+              Ajuste manual de batch
+            </label>
+            <input type="number" min={1} value={batchSize} disabled={!manualBatch} onChange={(event) => setBatchSize(Number(event.target.value || 1))} />
+            <input type="number" min={0} value={batchDelaySeconds} disabled={!manualBatch} onChange={(event) => setBatchDelaySeconds(Number(event.target.value || 0))} />
+          </div>
+
+          {needsCommand ? (
+            <>
+              {forceAllowList ? <p className="small">Perfil support: apenas command_id allowlist e permitido.</p> : null}
+              <div className="row">
+                <select onChange={(event) => applyTemplate(event.target.value)} defaultValue="">
+                  <option value="" disabled>
+                    Template rápido
+                  </option>
+                  {COMMAND_TEMPLATES.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+                <label className="check-inline">
+                  <input
+                    type="checkbox"
+                    checked={forceAllowList ? false : useDirectCommand}
+                    disabled={forceAllowList}
+                    onChange={(event) => setUseDirectCommand(event.target.checked)}
+                  />
+                  Comando direto (admin)
+                </label>
+              </div>
+
+              <select
+                value={selectedAllowedCommandId ?? ""}
+                onChange={(event) => setSelectedAllowedCommandId(event.target.value ? Number(event.target.value) : null)}
+              >
+                <option value="">Comando permitido (opcional para admin)</option>
+                {(allowedCommandsQuery.data ?? [])
+                  .filter((item) => item.active)
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      #{item.id} {item.name}
+                    </option>
+                  ))}
+              </select>
+
+              <textarea
+                disabled={forceAllowList || !useDirectCommand}
+                value={command}
+                onChange={(event) => setCommand(event.target.value)}
+                placeholder={forceAllowList ? "support nao pode usar comando direto" : ""}
+              />
+            </>
+          ) : null}
+
+          {needsArtifact ? (
+            <>
+              <select
+                value={selectedArtifactId ?? ""}
+                onChange={(event) => setSelectedArtifactId(event.target.value ? Number(event.target.value) : null)}
+              >
+                <option value="">Selecione artefato</option>
+                {(artifactsQuery.data ?? []).map((artifact) => (
+                  <option key={artifact.id} value={artifact.id}>
+                    {artifact.file_name} ({formatBytes(artifact.size_bytes)})
+                  </option>
+                ))}
+              </select>
+              <label>
+                Destino no agent (opcional)
+                <input value={targetPath} onChange={(event) => setTargetPath(event.target.value)} placeholder="app\\update.msi" />
+              </label>
+              <label className="upload-inline">
+                Upload artefato
+                <input type="file" onChange={(event) => void uploadArtifact(event.target.files?.[0] ?? null)} disabled={uploading} />
+              </label>
+              {action === "download_and_execute" ? (
+                <p className="small">Comando auto-silent sugerido: {autoSilentCommand((artifactsQuery.data ?? []).find((a) => a.id === selectedArtifactId)?.file_name)}</p>
+              ) : null}
+            </>
+          ) : null}
+
+          <div className="target-list">
+            {(agentsQuery.data ?? []).map((agent) => (
+              <label key={agent.agent_id} className="target-item">
+                <input
+                  type="checkbox"
+                  checked={selectedTargets.includes(agent.agent_id)}
+                  onChange={(event) => toggleTarget(agent.agent_id, event.target.checked)}
+                />
+                {agent.hostname} <span className="small">({agent.agent_id})</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="row">
+            <button type="button" onClick={() => void createJob()}>
+              Criar job
+            </button>
+            <button className="btn-secondary" type="button" onClick={() => setSelectedTargets((agentsQuery.data ?? []).map((item) => item.agent_id))}>
+              Selecionar todos
+            </button>
+          </div>
+        </Card>
+
+        <Card title="Lista de Jobs">
+          <div className="row">
+            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/ação" />
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">Todos</option>
+              <option value="pending">pending</option>
+              <option value="running">running</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+            </select>
+          </div>
+
+          {filteredJobs.length === 0 ? (
+            <EmptyState title="Nenhum job encontrado" subtitle="Ajuste filtros ou crie um novo job." />
+          ) : (
+            <Table headers={["ID", "Nome", "Status", "Rollout", "Atualizado", "Ações"]}>
+              {filteredJobs.map((job) => (
+                <tr key={job.id}>
+                  <td>{job.id}</td>
+                  <td>{job.name}</td>
+                  <td>
+                    <Badge tone={job.status === "failed" ? "error" : job.status === "completed" ? "ok" : "warn"}>{job.status}</Badge>
+                  </td>
+                  <td>
+                    {job.rollout_profile} ({job.batch_size}/{job.batch_delay_seconds}s)
+                  </td>
+                  <td>{formatTime(job.updated_at)}</td>
+                  <td>
+                    <button className="btn-secondary" type="button" onClick={() => setSelectedJob(job)}>
+                      Ver execuções
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
+      <Modal open={Boolean(selectedJob)} title={`Execuções do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
+        {(executionsQuery.data ?? []).length === 0 ? (
+          <EmptyState title="Sem execuções" subtitle="Aguardando primeiro resultado dos agents." />
+        ) : (
+          <Table headers={["Exec", "Agent", "Status", "Wave", "Tentativas", "Exit", "Saída", "Atualizado", "Ações"]}>
+            {(executionsQuery.data ?? []).map((execution) => (
+              <tr key={execution.id}>
+                <td>{execution.id}</td>
+                <td>{execution.agent_id}</td>
+                <td>
+                  <Badge tone={execution.status === "failed" || execution.status === "timeout" ? "error" : execution.status === "success" ? "ok" : "warn"}>
+                    {execution.status}
+                  </Badge>
+                </td>
+                <td>{execution.wave_no}</td>
+                <td>{execution.attempts}</td>
+                <td>{execution.exit_code ?? "-"}</td>
+                <td>{summarizeOutput(execution.stdout, execution.stderr)}</td>
+                <td>{formatTime(execution.updated_at)}</td>
+                <td>
+                  <button className="btn-secondary" type="button" onClick={() => setSelectedExecution(execution)}>
+                    Log completo
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+
+        <h3>Ondas</h3>
+        {(wavesQuery.data ?? []).length === 0 ? (
+          <p className="small">Sem dados de ondas para este job.</p>
+        ) : (
+          <div className="waves-grid">
+            {(wavesQuery.data ?? []).map((wave) => {
+              const finished = wave.success + wave.failed + wave.timeout;
+              const progress = wave.total > 0 ? Math.round((finished / wave.total) * 100) : 0;
+              return (
+                <div key={wave.wave_no} className="wave-card">
+                  <div className="wave-title">Onda {wave.wave_no}</div>
+                  <div className="wave-progress">
+                    <div className="wave-progress-bar" style={{ width: `${progress}%` }} />
+                  </div>
+                  <p className="small">
+                    total {wave.total} | ok {wave.success} | failed {wave.failed} | timeout {wave.timeout} | running {wave.running}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={Boolean(selectedExecution)} title={`Log Execução ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
+        {selectedExecution ? (
+          <pre className="log-pre">{[
+            `status: ${selectedExecution.status}`,
+            `exit_code: ${selectedExecution.exit_code ?? "-"}`,
+            `duration_ms: ${selectedExecution.duration_ms ?? "-"}`,
+            `updated_at: ${selectedExecution.updated_at}`,
+            "",
+            "=== STDOUT ===",
+            selectedExecution.stdout ?? "(vazio)",
+            "",
+            "=== STDERR ===",
+            selectedExecution.stderr ?? "(vazio)",
+            "",
+            "=== ERROR_MESSAGE ===",
+            selectedExecution.error_message ?? "(vazio)",
+          ].join("\n")}</pre>
+        ) : null}
+      </Modal>
+    </div>
+  );
+}
+

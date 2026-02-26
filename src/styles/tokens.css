@@ -1,0 +1,45 @@
+﻿@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap");
+
+:root {
+  --bg-1: #061521;
+  --bg-2: #0f2333;
+  --surface: #122a3d;
+  --surface-soft: #17344b;
+  --text: #e9f3ff;
+  --muted: #9cb8d1;
+  --border: #2a4a64;
+  --brand: #14c7b2;
+  --brand-2: #34e2ff;
+  --ok: #33d17a;
+  --warn: #f5c26b;
+  --danger: #ff6c7d;
+  --radius: 14px;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "Sora", sans-serif;
+  background:
+    radial-gradient(circle at 10% 10%, #163046 0%, transparent 40%),
+    radial-gradient(circle at 90% 20%, #0e3f57 0%, transparent 30%),
+    linear-gradient(135deg, var(--bg-1), var(--bg-2));
+  color: var(--text);
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
