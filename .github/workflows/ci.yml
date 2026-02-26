@@ -1,0 +1,34 @@
+name: ci-dashboard
+
+on:
+  push:
+    branches: [teste]
+  pull_request:
+    branches: [teste, main]
+
+jobs:
+  dashboard-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install deps
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tee ci-npm-ci.log
+      - name: Build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ci-build.log
+      - name: Upload CI logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-ci-logs
+          path: |
+            ci-npm-ci.log
+            ci-build.log

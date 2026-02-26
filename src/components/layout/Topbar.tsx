@@ -1,5 +1,4 @@
-﻿import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react";
 import { useAuth } from "../../lib/auth/AuthContext";
 
 type TopbarProps = {
@@ -8,7 +7,6 @@ type TopbarProps = {
 };
 
 export function Topbar({ onError, onSuccess }: TopbarProps) {
-  const navigate = useNavigate();
   const {
     supabaseConfigured,
     session,
@@ -86,11 +84,6 @@ export function Topbar({ onError, onSuccess }: TopbarProps) {
           </div>
         ) : (
           <div className="row">
-            {backendUser?.role === "admin" ? (
-              <button className="btn-secondary" type="button" onClick={() => navigate("/settings/users")}>
-                Configurações
-              </button>
-            ) : null}
             <button className="btn-secondary" type="button" onClick={handleLogout} disabled={!supabaseConfigured}>
               Sair
             </button>

@@ -9,12 +9,87 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth } from "../../lib/auth/AuthContext";
 import { apiGet, apiPost, apiPostForm } from "../../lib/api/client";
 import { formatBytes, formatTime, sanitizePath, summarizeOutput } from "../../lib/format";
-import type { AllowedCommand, Agent, Artifact, Job, JobCreateRequest, JobCreateResponse, JobExecution, JobWave, RolloutProfile } from "../../types/api";
+import type {
+  AllowedCommand,
+  Agent,
+  Artifact,
+  Job,
+  JobCreateRequest,
+  JobCreateResponse,
+  JobExecution,
+  JobWave,
+  RolloutProfile,
+} from "../../types/api";
 import { useToast } from "../../components/ui/Toast";
 
-const COMMAND_TEMPLATES = [
-  { id: "run_ps_update", label: "Windows Update Scan", command: "UsoClient StartScan" },
-  { id: "run_create_dir", label: "Criar Pasta", command: "New-Item -ItemType Directory -Force -Path 'C:\\ProgramData\\MonitoringAgent\\work'" },
+type FixedTemplate = {
+  key: string;
+  name: string;
+  label: string;
+  commandText: string;
+};
+
+type QuickTemplate = {
+  key: string;
+  label: string;
+  source: "fixed" | "admin" | "execute";
+  commandText?: string;
+  commandId?: number;
+  commandName?: string;
+};
+
+const FIXED_TEMPLATES: FixedTemplate[] = [
+  { key: "win-dns-flush", name: "win-dns-flush", label: "Windows DNS Flush", commandText: "ipconfig /flushdns" },
+  { key: "win-gpupdate-force", name: "win-gpupdate-force", label: "Windows GPUpdate Force", commandText: "gpupdate /force" },
+  { key: "win-spooler-restart", name: "win-spooler-restart", label: "Windows Restart Spooler", commandText: "Restart-Service -Name 'Spooler' -Force" },
+  {
+    key: "win-winget-upgrade-all",
+    name: "win-winget-upgrade-all",
+    label: "Windows Winget Upgrade All",
+    commandText: "winget upgrade --all --silent --accept-package-agreements --accept-source-agreements",
+  },
+  {
+    key: "win-disk-clean-temp",
+    name: "win-disk-clean-temp",
+    label: "Windows Clean Temp",
+    commandText:
+      "PowerShell -NoProfile -Command \"Get-ChildItem $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue\"",
+  },
+  {
+    key: "win-quick-diagnostics",
+    name: "win-quick-diagnostics",
+    label: "Windows Quick Diagnostics",
+    commandText: "systeminfo; ipconfig /all; Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 30",
+  },
+  { key: "linux-apt-update", name: "linux-apt-update", label: "Linux APT Update", commandText: "sudo apt-get update -y" },
+  {
+    key: "linux-apt-upgrade",
+    name: "linux-apt-upgrade",
+    label: "Linux APT Upgrade",
+    commandText: "sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+  },
+  { key: "linux-disk-usage", name: "linux-disk-usage", label: "Linux Disk Usage", commandText: "df -h" },
+  { key: "linux-system-uptime", name: "linux-system-uptime", label: "Linux Uptime + Memory", commandText: "uptime && free -h" },
+  {
+    key: "linux-restart-service-template",
+    name: "linux-restart-service-template",
+    label: "Linux Restart Service (Template)",
+    commandText: "sudo systemctl restart <service_name>",
+  },
+  { key: "linux-journal-tail", name: "linux-journal-tail", label: "Linux Journal Tail", commandText: "sudo journalctl -n 200 --no-pager" },
+];
+
+const EXECUTE_TEMPLATES: FixedTemplate[] = [
+  { key: "exec-auto", name: "exec-auto", label: "Auto by selected artifact", commandText: "{{auto_silent}}" },
+  { key: "exec-msi-silent", name: "exec-msi-silent", label: "Install MSI silent", commandText: "msiexec /i {{artifact_path}} /qn /norestart" },
+  {
+    key: "exec-exe-silent",
+    name: "exec-exe-silent",
+    label: "Install EXE silent",
+    commandText: "Start-Process -FilePath {{artifact_path}} -ArgumentList '/S','/quiet','/norestart' -Wait",
+  },
+  { key: "exec-ps1", name: "exec-ps1", label: "Run PS1 script", commandText: "powershell -NoProfile -ExecutionPolicy Bypass -File {{artifact_path}}" },
+  { key: "exec-cmd", name: "exec-cmd", label: "Run CMD/BAT script", commandText: "cmd /c {{artifact_path}}" },
 ];
 
 type JobAction = "run_command" | "download_artifact" | "download_and_execute";
@@ -49,6 +124,7 @@ export function JobsPage() {
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null);
   const [selectedAllowedCommandId, setSelectedAllowedCommandId] = useState<number | null>(null);
+  const [selectedQuickTemplateKey, setSelectedQuickTemplateKey] = useState<string>("");
   const [useDirectCommand, setUseDirectCommand] = useState(true);
   const [jobFilter, setJobFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -104,16 +180,62 @@ export function JobsPage() {
     });
   }, [jobsQuery.data, jobFilter, statusFilter]);
 
+  const quickTemplates = useMemo<QuickTemplate[]>(() => {
+    const adminCommands = (allowedCommandsQuery.data ?? [])
+      .filter((item) => item.active && item.created_by && item.created_by !== "system")
+      .map((item) => ({
+        key: `admin:${item.id}`,
+        label: `${item.name} [Admin]`,
+        source: "admin" as const,
+        commandId: item.id,
+        commandText: item.command_text,
+        commandName: item.name,
+      }));
+
+    const fixed = FIXED_TEMPLATES.map((item) => ({
+      key: `fixed:${item.key}`,
+      label: `${item.label} [Padrao]`,
+      source: "fixed" as const,
+      commandText: item.commandText,
+      commandName: item.name,
+    }));
+
+    return [...fixed, ...adminCommands];
+  }, [allowedCommandsQuery.data]);
+
+  const executeTemplates = useMemo<QuickTemplate[]>(() => {
+    return EXECUTE_TEMPLATES.map((item) => ({
+      key: `execute:${item.key}`,
+      label: `${item.label} [Execucao]`,
+      source: "execute" as const,
+      commandText: item.commandText,
+      commandName: item.name,
+    }));
+  }, []);
+
   const needsArtifact = action === "download_artifact" || action === "download_and_execute";
   const needsCommand = action === "run_command" || action === "download_and_execute";
+  const isDownloadAndExecute = action === "download_and_execute";
   const role = auth.role ?? "admin";
   const forceAllowList = role === "support";
+  const displayedQuickTemplates = action === "download_and_execute" ? executeTemplates : quickTemplates;
 
   useEffect(() => {
     if (role === "support" && action === "download_and_execute") {
       setAction("run_command");
     }
   }, [role, action]);
+
+  useEffect(() => {
+    setSelectedQuickTemplateKey("");
+  }, [action]);
+
+  useEffect(() => {
+    if (isDownloadAndExecute) {
+      setUseDirectCommand(true);
+      setSelectedAllowedCommandId(null);
+    }
+  }, [isDownloadAndExecute]);
 
   function toggleTarget(agentId: string, checked: boolean) {
     setSelectedTargets((prev) => {
@@ -122,9 +244,39 @@ export function JobsPage() {
     });
   }
 
-  function applyTemplate(templateId: string) {
-    const template = COMMAND_TEMPLATES.find((item) => item.id === templateId);
-    if (template) setCommand(template.command);
+  function applyTemplate(templateKey: string) {
+    setSelectedQuickTemplateKey(templateKey);
+    const selected = displayedQuickTemplates.find((item) => item.key === templateKey);
+    if (!selected) return;
+
+    if (selected.source === "execute") {
+      const raw = selected.commandText ?? "";
+      if (raw === "{{auto_silent}}") {
+        const selectedArtifact = (artifactsQuery.data ?? []).find((item) => item.id === selectedArtifactId);
+        setCommand(autoSilentCommand(selectedArtifact?.file_name));
+      } else {
+        setCommand(raw);
+      }
+      return;
+    }
+
+    if (selected.source === "admin") {
+      if (selected.commandId) setSelectedAllowedCommandId(selected.commandId);
+      if (role === "admin" && selected.commandText) setCommand(selected.commandText);
+      return;
+    }
+
+    const matchedAllow = (allowedCommandsQuery.data ?? []).find((item) => item.active && item.name === selected.commandName);
+
+    if (matchedAllow) {
+      setSelectedAllowedCommandId(matchedAllow.id);
+    }
+
+    if (role === "admin") {
+      if (selected.commandText) setCommand(selected.commandText);
+    } else if (!matchedAllow) {
+      toast.showError("Template requer aprovacao allowlist para suporte.");
+    }
   }
 
   async function createJob() {
@@ -196,7 +348,7 @@ export function JobsPage() {
 
   return (
     <div className="page-content">
-      <PageHeader title="Jobs" subtitle="Rollout em ondas, execução e rastreabilidade operacional" />
+      <PageHeader title="Jobs" subtitle="Rollout em ondas, execucao e rastreabilidade operacional" />
 
       <div className="two-col-grid">
         <Card title="Criar Job">
@@ -206,7 +358,7 @@ export function JobsPage() {
               <input value={name} onChange={(event) => setName(event.target.value)} />
             </label>
             <label>
-              Ação
+              Acao
               <select value={action} onChange={(event) => setAction(event.target.value as JobAction)}>
                 <option value="run_command">run_command</option>
                 <option value="download_artifact">download_artifact</option>
@@ -240,40 +392,46 @@ export function JobsPage() {
             <>
               {forceAllowList ? <p className="small">Perfil support: apenas command_id allowlist e permitido.</p> : null}
               <div className="row">
-                <select onChange={(event) => applyTemplate(event.target.value)} defaultValue="">
+                <select value={selectedQuickTemplateKey} onChange={(event) => applyTemplate(event.target.value)}>
                   <option value="" disabled>
-                    Template rápido
+                    Template rapido
                   </option>
-                  {COMMAND_TEMPLATES.map((template) => (
-                    <option key={template.id} value={template.id}>
+                  {displayedQuickTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>
                       {template.label}
                     </option>
                   ))}
                 </select>
-                <label className="check-inline">
-                  <input
-                    type="checkbox"
-                    checked={forceAllowList ? false : useDirectCommand}
-                    disabled={forceAllowList}
-                    onChange={(event) => setUseDirectCommand(event.target.checked)}
-                  />
-                  Comando direto (admin)
-                </label>
+                {!isDownloadAndExecute ? (
+                  <label className="check-inline">
+                    <input
+                      type="checkbox"
+                      checked={forceAllowList ? false : useDirectCommand}
+                      disabled={forceAllowList}
+                      onChange={(event) => setUseDirectCommand(event.target.checked)}
+                    />
+                    Comando direto (admin)
+                  </label>
+                ) : null}
               </div>
 
-              <select
-                value={selectedAllowedCommandId ?? ""}
-                onChange={(event) => setSelectedAllowedCommandId(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="">Comando permitido (opcional para admin)</option>
-                {(allowedCommandsQuery.data ?? [])
-                  .filter((item) => item.active)
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      #{item.id} {item.name}
-                    </option>
-                  ))}
-              </select>
+              {!isDownloadAndExecute ? (
+                <select
+                  value={selectedAllowedCommandId ?? ""}
+                  onChange={(event) => setSelectedAllowedCommandId(event.target.value ? Number(event.target.value) : null)}
+                >
+                  <option value="">Comando permitido (opcional para admin)</option>
+                  {(allowedCommandsQuery.data ?? [])
+                    .filter((item) => item.active)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        #{item.id} {item.name}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <p className="small">Modo download_and_execute: use os templates de execução acima.</p>
+              )}
 
               <textarea
                 disabled={forceAllowList || !useDirectCommand}
@@ -336,7 +494,7 @@ export function JobsPage() {
 
         <Card title="Lista de Jobs">
           <div className="row">
-            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/ação" />
+            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/acao" />
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">Todos</option>
               <option value="pending">pending</option>
@@ -349,7 +507,7 @@ export function JobsPage() {
           {filteredJobs.length === 0 ? (
             <EmptyState title="Nenhum job encontrado" subtitle="Ajuste filtros ou crie um novo job." />
           ) : (
-            <Table headers={["ID", "Nome", "Status", "Rollout", "Atualizado", "Ações"]}>
+            <Table headers={["ID", "Nome", "Status", "Rollout", "Atualizado", "Acoes"]}>
               {filteredJobs.map((job) => (
                 <tr key={job.id}>
                   <td>{job.id}</td>
@@ -363,7 +521,7 @@ export function JobsPage() {
                   <td>{formatTime(job.updated_at)}</td>
                   <td>
                     <button className="btn-secondary" type="button" onClick={() => setSelectedJob(job)}>
-                      Ver execuções
+                      Ver execucoes
                     </button>
                   </td>
                 </tr>
@@ -373,11 +531,11 @@ export function JobsPage() {
         </Card>
       </div>
 
-      <Modal open={Boolean(selectedJob)} title={`Execuções do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
+      <Modal open={Boolean(selectedJob)} title={`Execucoes do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
         {(executionsQuery.data ?? []).length === 0 ? (
-          <EmptyState title="Sem execuções" subtitle="Aguardando primeiro resultado dos agents." />
+          <EmptyState title="Sem execucoes" subtitle="Aguardando primeiro resultado dos agents." />
         ) : (
-          <Table headers={["Exec", "Agent", "Status", "Wave", "Tentativas", "Exit", "Saída", "Atualizado", "Ações"]}>
+          <Table headers={["Exec", "Agent", "Status", "Wave", "Tentativas", "Exit", "Saida", "Atualizado", "Acoes"]}>
             {(executionsQuery.data ?? []).map((execution) => (
               <tr key={execution.id}>
                 <td>{execution.id}</td>
@@ -426,7 +584,7 @@ export function JobsPage() {
         )}
       </Modal>
 
-      <Modal open={Boolean(selectedExecution)} title={`Log Execução ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
+      <Modal open={Boolean(selectedExecution)} title={`Log Execucao ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
         {selectedExecution ? (
           <pre className="log-pre">{[
             `status: ${selectedExecution.status}`,
@@ -448,4 +606,3 @@ export function JobsPage() {
     </div>
   );
 }
-

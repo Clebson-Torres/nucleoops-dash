@@ -106,6 +106,7 @@ export type AllowedCommand = {
   command_text: string;
   description?: string | null;
   active: boolean;
+  created_by?: string | null;
 };
 
 export type ApiError = {

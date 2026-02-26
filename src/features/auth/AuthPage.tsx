@@ -9,6 +9,11 @@ function flowType(): string | null {
   return hash.get("type") ?? query.get("type");
 }
 
+function hasAuthCodeInUrl(): boolean {
+  const query = new URLSearchParams(window.location.search);
+  return Boolean(query.get("code") || query.get("token_hash"));
+}
+
 async function ensureSessionFromUrl(): Promise<boolean> {
   if (!supabase) return false;
 
@@ -33,6 +38,7 @@ export function AuthPage() {
   const [message, setMessage] = useState("Validando link...");
   const [error, setError] = useState(false);
   const [validating, setValidating] = useState(true);
+  const [mustSetPassword, setMustSetPassword] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -51,18 +57,22 @@ export function AuthPage() {
       const ready = await ensureSessionFromUrl();
       if (!mounted) return;
 
+      const codeFlow = hasAuthCodeInUrl();
       if (!ready) {
         setError(true);
         setMessage("Sessão de convite/recuperação inválida. Reabra o link do e-mail.");
-      } else if (kind === "invite") {
+      } else if (kind === "invite" || codeFlow) {
         setError(false);
         setMessage("Convite confirmado. Defina sua senha para concluir o acesso.");
+        setMustSetPassword(true);
       } else if (kind === "recovery") {
         setError(false);
         setMessage("Recuperação validada. Defina sua nova senha.");
+        setMustSetPassword(true);
       } else {
         setError(false);
         setMessage("Sessão válida. Você pode definir/alterar sua senha.");
+        setMustSetPassword(false);
       }
 
       setValidating(false);
@@ -126,7 +136,9 @@ export function AuthPage() {
           <button type="button" onClick={() => void handleUpdate()} disabled={validating}>
             Atualizar senha
           </button>
-          <button className="btn-secondary" type="button" onClick={() => navigate("/overview")}>Ir para painel</button>
+          {!mustSetPassword ? (
+            <button className="btn-secondary" type="button" onClick={() => navigate("/overview")}>Ir para painel</button>
+          ) : null}
         </div>
       </Card>
     </div>
