@@ -5,6 +5,7 @@ import { JobsPage } from "../features/jobs/JobsPage";
 import { AgentsPage } from "../features/agents/AgentsPage";
 import { UsersSettingsPage } from "../features/settings/UsersSettingsPage";
 import { AuthPage } from "../features/auth/AuthPage";
+import { DeployAgentPage } from "../features/deploy/DeployAgentPage";
 
 export const router = createBrowserRouter([
   { path: "/auth", element: <AuthPage /> },
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { path: "overview", element: <OverviewPage /> },
       { path: "jobs", element: <JobsPage /> },
       { path: "agents", element: <AgentsPage /> },
+      { path: "deploy", element: <DeployAgentPage /> },
       { path: "settings/users", element: <UsersSettingsPage /> },
     ],
   },

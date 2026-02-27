@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+﻿import { NavLink } from "react-router-dom";
 import { useAuth } from "../../lib/auth/AuthContext";
 
 export function Sidebar() {
@@ -6,8 +6,8 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar card">
-      <h1 className="brand">NúcleoOps</h1>
-      <p className="brand-subtitle">Operações diárias</p>
+      <h1 className="brand">NucleoOps</h1>
+      <p className="brand-subtitle">Operacoes diarias</p>
       <nav className="nav-links">
         <NavLink to="/overview" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
           Overview
@@ -19,8 +19,13 @@ export function Sidebar() {
           Agents
         </NavLink>
         {auth.role === "admin" ? (
+          <NavLink to="/deploy" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            Deploy Agent
+          </NavLink>
+        ) : null}
+        {auth.role === "admin" ? (
           <NavLink to="/settings/users" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-            Configurações
+            Configuracoes
           </NavLink>
         ) : null}
       </nav>

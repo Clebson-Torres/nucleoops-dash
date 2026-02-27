@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { Card } from "../../components/ui/Card";
@@ -131,6 +131,7 @@ export function JobsPage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedExecution, setSelectedExecution] = useState<JobExecution | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [showAllJobs, setShowAllJobs] = useState(false);
 
   const agentsQuery = useQuery({
     queryKey: ["jobs-agents", headers.accessToken],
@@ -172,13 +173,20 @@ export function JobsPage() {
 
   const filteredJobs = useMemo(() => {
     const list = jobsQuery.data ?? [];
-    return list.filter((job) => {
+    const filtered = list.filter((job) => {
       const matchesStatus = statusFilter === "all" || job.status === statusFilter;
       const needle = jobFilter.trim().toLowerCase();
       const matchesText = !needle || `${job.id} ${job.name} ${job.action_type}`.toLowerCase().includes(needle);
       return matchesStatus && matchesText;
     });
+
+    return filtered.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
   }, [jobsQuery.data, jobFilter, statusFilter]);
+
+  const visibleJobs = useMemo(() => {
+    if (showAllJobs) return filteredJobs;
+    return filteredJobs.slice(0, 10);
+  }, [filteredJobs, showAllJobs]);
 
   const quickTemplates = useMemo<QuickTemplate[]>(() => {
     const adminCommands = (allowedCommandsQuery.data ?? [])
@@ -384,9 +392,19 @@ export function JobsPage() {
               <input type="checkbox" checked={manualBatch} onChange={(event) => setManualBatch(event.target.checked)} />
               Ajuste manual de batch
             </label>
-            <input type="number" min={1} value={batchSize} disabled={!manualBatch} onChange={(event) => setBatchSize(Number(event.target.value || 1))} />
-            <input type="number" min={0} value={batchDelaySeconds} disabled={!manualBatch} onChange={(event) => setBatchDelaySeconds(Number(event.target.value || 0))} />
           </div>
+          {manualBatch ? (
+            <div className="row">
+              <label>
+                Batch size
+                <input type="number" min={1} value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value || 1))} />
+              </label>
+              <label>
+                Delay entre ondas (s)
+                <input type="number" min={0} value={batchDelaySeconds} onChange={(event) => setBatchDelaySeconds(Number(event.target.value || 0))} />
+              </label>
+            </div>
+          ) : null}
 
           {needsCommand ? (
             <>
@@ -430,7 +448,7 @@ export function JobsPage() {
                     ))}
                 </select>
               ) : (
-                <p className="small">Modo download_and_execute: use os templates de execução acima.</p>
+                <p className="small">Modo download_and_execute: use os templates de execucao acima.</p>
               )}
 
               <textarea
@@ -494,7 +512,7 @@ export function JobsPage() {
 
         <Card title="Lista de Jobs">
           <div className="row">
-            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/acao" />
+            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/Acao" />
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">Todos</option>
               <option value="pending">pending</option>
@@ -508,7 +526,7 @@ export function JobsPage() {
             <EmptyState title="Nenhum job encontrado" subtitle="Ajuste filtros ou crie um novo job." />
           ) : (
             <Table headers={["ID", "Nome", "Status", "Rollout", "Atualizado", "Acoes"]}>
-              {filteredJobs.map((job) => (
+              {visibleJobs.map((job) => (
                 <tr key={job.id}>
                   <td>{job.id}</td>
                   <td>{job.name}</td>
@@ -528,10 +546,17 @@ export function JobsPage() {
               ))}
             </Table>
           )}
+          {filteredJobs.length > 10 ? (
+            <div className="row">
+              <button className="btn-secondary" type="button" onClick={() => setShowAllJobs((prev) => !prev)}>
+                {showAllJobs ? "Mostrar apenas 10 ultimas" : `Expandir lista (${filteredJobs.length})`}
+              </button>
+            </div>
+          ) : null}
         </Card>
       </div>
 
-      <Modal open={Boolean(selectedJob)} title={`Execucoes do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
+      <Modal open={Boolean(selectedJob)} title={`execucoes do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
         {(executionsQuery.data ?? []).length === 0 ? (
           <EmptyState title="Sem execucoes" subtitle="Aguardando primeiro resultado dos agents." />
         ) : (
@@ -584,7 +609,7 @@ export function JobsPage() {
         )}
       </Modal>
 
-      <Modal open={Boolean(selectedExecution)} title={`Log Execucao ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
+      <Modal open={Boolean(selectedExecution)} title={`Log execucao ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
         {selectedExecution ? (
           <pre className="log-pre">{[
             `status: ${selectedExecution.status}`,
@@ -606,3 +631,5 @@ export function JobsPage() {
     </div>
   );
 }
+
+
