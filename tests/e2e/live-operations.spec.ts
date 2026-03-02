@@ -15,7 +15,7 @@ async function loginInTopbar(page: Parameters<typeof test>[0]["page"]) {
   await page.getByPlaceholder("e-mail Supabase").fill(liveEmail);
   await page.getByPlaceholder("senha").fill(livePassword);
   await page.getByRole("button", { name: "Entrar" }).click();
-  await expect(page.getByText("Autenticado no backend")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/^Autenticado no backend:/)).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe("dashboard live operations", () => {
@@ -29,13 +29,35 @@ test.describe("dashboard live operations", () => {
     const jobName = `e2e-live-${Date.now()}`;
     await page.locator("label:has-text('Nome') input").fill(jobName);
     await page.locator("label:has-text('Acao') select").selectOption("run_command");
-    await page.locator("textarea").fill(liveCommand);
+    const backendStatus = (await page.locator(".status-line").nth(1).textContent()) ?? "";
+    const isSupport = backendStatus.toLowerCase().includes("(support)");
+
+    if (isSupport) {
+      const templateSelect = page.locator("select").nth(2);
+      await templateSelect.selectOption({ label: "Linux Journal Tail [Padrao]" });
+
+      const allowlist = page.locator("select").nth(5);
+      await allowlist.selectOption({ index: 1 });
+      await expect.poll(async () => await allowlist.inputValue()).not.toBe("");
+    } else {
+      await page.locator("textarea").fill(liveCommand);
+    }
 
     const targetRow = page.locator(".target-item", { hasText: liveAgentId }).first();
     await expect(targetRow).toBeVisible({ timeout: 30_000 });
     await targetRow.locator("input[type='checkbox']").check();
 
     await page.getByRole("button", { name: "Criar job" }).click();
+    const requestSent = await page.waitForResponse(
+      (response) => response.url().includes("/api/jobs") && response.request().method() === "POST",
+      { timeout: 15_000 }
+    ).catch(() => null);
+    if (!requestSent) {
+      const toastError = await page.locator(".toast.toast-error").first().textContent().catch(() => null);
+      throw new Error(`POST /jobs not sent from UI. Validation/toast: ${toastError ?? "unknown"}`);
+    }
+    const createBody = await requestSent.text();
+    expect(requestSent.status(), `POST /jobs failed: ${createBody}`).toBe(201);
 
     const jobRow = page.locator("tr", { hasText: jobName }).first();
     await expect(jobRow).toBeVisible({ timeout: 30_000 });
