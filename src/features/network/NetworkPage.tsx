@@ -11,6 +11,8 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "../../lib/api/client";
 import { formatTime } from "../../lib/format";
 import type {
   CreateNetworkProbeRequest,
+  NetworkDiscoveryRequest,
+  NetworkDiscoveryResponse,
   NetworkProbe,
   NetworkProbeCheck,
   NetworkProbesSummary,
@@ -40,6 +42,10 @@ export function NetworkPage() {
   const [timeoutMs, setTimeoutMs] = useState(1200);
   const [selectedProbeId, setSelectedProbeId] = useState<number | null>(null);
   const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("active");
+  const [discoveryCidr, setDiscoveryCidr] = useState("");
+  const [discoveryLocation, setDiscoveryLocation] = useState("descoberta-local");
+  const [discoverySaveAsProbes, setDiscoverySaveAsProbes] = useState(true);
+  const [discoveryResult, setDiscoveryResult] = useState<NetworkDiscoveryResponse | null>(null);
 
   const probesQuery = useQuery({
     queryKey: ["network-probes", activeFilter, headers.accessToken],
@@ -138,6 +144,47 @@ export function NetworkPage() {
     }
   }
 
+  async function renameProbe(probe: NetworkProbe) {
+    if (auth.role !== "admin") {
+      toast.showError("Acao restrita ao perfil admin.");
+      return;
+    }
+    const nextName = window.prompt("Novo nome do host", probe.name)?.trim();
+    if (!nextName) return;
+    try {
+      await apiPatch<NetworkProbe>(`/network/probes/${probe.id}`, { name: nextName }, headers);
+      toast.showSuccess("Nome atualizado.");
+      await probesQuery.refetch();
+    } catch (error) {
+      toast.showError(error instanceof Error ? error.message : "Falha ao renomear host.");
+    }
+  }
+
+  async function runDiscovery() {
+    if (auth.role !== "admin") {
+      toast.showError("Acao restrita ao perfil admin.");
+      return;
+    }
+    const payload: NetworkDiscoveryRequest = {
+      cidr: discoveryCidr.trim() || undefined,
+      save_as_probes: discoverySaveAsProbes,
+      interval_seconds: intervalSeconds,
+      timeout_ms: timeoutMs,
+      location: discoveryLocation.trim() || undefined,
+    };
+    try {
+      const result = await apiPost<NetworkDiscoveryResponse>("/network/discovery/run", payload, headers);
+      setDiscoveryResult(result);
+      toast.showSuccess(
+        `Descoberta concluida: ${result.online_hosts} host(s) online, ${result.saved_probes} salvo(s).`
+      );
+      await probesQuery.refetch();
+      await summaryQuery.refetch();
+    } catch (error) {
+      toast.showError(error instanceof Error ? error.message : "Falha na descoberta de rede.");
+    }
+  }
+
   const probes = probesQuery.data ?? [];
 
   return (
@@ -221,6 +268,61 @@ export function NetworkPage() {
         </Card>
       </div>
 
+      <Card title="Descoberta local (manual)">
+        <div className="form-grid">
+          <label>
+            CIDR (opcional)
+            <input
+              value={discoveryCidr}
+              onChange={(event) => setDiscoveryCidr(event.target.value)}
+              placeholder="192.168.1.0/24"
+            />
+          </label>
+          <label>
+            Local para hosts descobertos
+            <input
+              value={discoveryLocation}
+              onChange={(event) => setDiscoveryLocation(event.target.value)}
+              placeholder="Filial SP"
+            />
+          </label>
+        </div>
+        <label className="check-inline">
+          <input
+            type="checkbox"
+            checked={discoverySaveAsProbes}
+            onChange={(event) => setDiscoverySaveAsProbes(event.target.checked)}
+          />
+          Salvar host descoberto automaticamente como probe ativo
+        </label>
+        <div className="row">
+          <button type="button" onClick={() => void runDiscovery()}>Executar descoberta</button>
+          <span className="small">
+            Intervalo e timeout usados no monitoramento: {intervalSeconds}s / {timeoutMs}ms.
+          </span>
+        </div>
+        {discoveryResult ? (
+          <div className="compact-list">
+            <p className="small">
+              Rede: {discoveryResult.cidr_used} | local: {discoveryResult.local_hostname ?? "-"} (
+              {discoveryResult.local_ip ?? "-"}) | gateway: {discoveryResult.gateway_ip ?? "-"} (
+              {discoveryResult.gateway_mac ?? "-"})
+            </p>
+            <Table headers={["IP", "Host name", "MAC", "Gateway", "Probe"]}>
+              {discoveryResult.devices.map((item) => (
+                <tr key={item.ip_address}>
+                  <td>{item.ip_address}</td>
+                  <td>{item.host_name ?? "-"}</td>
+                  <td>{item.mac_address ?? "-"}</td>
+                  <td>{item.is_gateway ? "sim" : "nao"}</td>
+                  <td>{item.saved_probe_id ?? "-"}</td>
+                </tr>
+              ))}
+            </Table>
+          </div>
+        ) : null}
+      </Card>
+
       <Card title="Alvos monitorados">
         {probes.length === 0 ? (
           <EmptyState title="Sem alvos" subtitle="Cadastre IPs para monitoramento." />
@@ -245,6 +347,9 @@ export function NetworkPage() {
                   <div className="row">
                     <button className="btn-secondary" type="button" onClick={() => void toggleProbe(probe)}>
                       {probe.active ? "Desativar" : "Ativar"}
+                    </button>
+                    <button className="btn-secondary" type="button" onClick={() => void renameProbe(probe)}>
+                      Renomear
                     </button>
                     <button className="btn-secondary" type="button" onClick={() => void removeProbe(probe)}>
                       Remover
@@ -280,4 +385,3 @@ export function NetworkPage() {
     </div>
   );
 }
-

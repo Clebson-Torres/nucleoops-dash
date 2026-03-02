@@ -75,6 +75,35 @@ export type UpdateNetworkProbeRequest = {
   active?: boolean;
 };
 
+export type NetworkDiscoveryRequest = {
+  cidr?: string;
+  save_as_probes: boolean;
+  interval_seconds: number;
+  timeout_ms: number;
+  location?: string;
+};
+
+export type NetworkDiscoveryDevice = {
+  ip_address: string;
+  host_name?: string | null;
+  mac_address?: string | null;
+  is_gateway: boolean;
+  latency_ms?: number | null;
+  saved_probe_id?: number | null;
+};
+
+export type NetworkDiscoveryResponse = {
+  cidr_used: string;
+  local_hostname?: string | null;
+  local_ip?: string | null;
+  gateway_ip?: string | null;
+  gateway_mac?: string | null;
+  scanned_hosts: number;
+  online_hosts: number;
+  saved_probes: number;
+  devices: NetworkDiscoveryDevice[];
+};
+
 export type NetworkProbeCheck = {
   id: number;
   probe_id: number;
