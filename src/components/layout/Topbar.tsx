@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { ApiVersion } from "../../types/api";
+import { apiGetPublic } from "../../lib/api/client";
 import { useAuth } from "../../lib/auth/AuthContext";
 
 type TopbarProps = {
@@ -21,6 +24,12 @@ export function Topbar({ onError, onSuccess }: TopbarProps) {
   const [password, setPassword] = useState("");
   const [inlineMessage, setInlineMessage] = useState("");
   const [inlineError, setInlineError] = useState(false);
+  const versionQuery = useQuery({
+    queryKey: ["api-version"],
+    queryFn: () => apiGetPublic<ApiVersion>("/version"),
+    staleTime: 60_000,
+    retry: 1,
+  });
 
   function showStatus(message: string, isError: boolean) {
     setInlineMessage(message);
@@ -46,8 +55,8 @@ export function Topbar({ onError, onSuccess }: TopbarProps) {
   async function handleLogout() {
     try {
       await signOut();
-      onSuccess("Sessão encerrada.");
-      showStatus("Sessão encerrada.", false);
+      onSuccess("Sessao encerrada.");
+      showStatus("Sessao encerrada.", false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Falha no logout.";
       onError(message);
@@ -57,12 +66,12 @@ export function Topbar({ onError, onSuccess }: TopbarProps) {
 
   async function handleForgotPassword() {
     try {
-      if (!loginEmail.trim()) throw new Error("Informe o e-mail para recuperação.");
+      if (!loginEmail.trim()) throw new Error("Informe o e-mail para recuperacao.");
       await sendPasswordReset(loginEmail.trim());
-      showStatus("E-mail de recuperação enviado. Verifique sua caixa de entrada.", false);
-      onSuccess("E-mail de recuperação enviado.");
+      showStatus("E-mail de recuperacao enviado. Verifique sua caixa de entrada.", false);
+      onSuccess("E-mail de recuperacao enviado.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Falha ao enviar recuperação.";
+      const message = error instanceof Error ? error.message : "Falha ao enviar recuperacao.";
       showStatus(message, true);
       onError(message);
     }
@@ -92,15 +101,20 @@ export function Topbar({ onError, onSuccess }: TopbarProps) {
 
         <div className="status-line">
           {session
-            ? `Sessão Supabase ativa: ${session.user.email ?? session.user.id}`
+            ? `Sessao Supabase ativa: ${session.user.email ?? session.user.id}`
             : supabaseConfigured
-              ? "Sem sessão Supabase ativa."
-              : "Supabase não configurado."}
+              ? "Sem sessao Supabase ativa."
+              : "Supabase nao configurado."}
         </div>
         <div className={`status-line ${backendUser ? "" : "error"}`}>
           {backendUser
             ? `Autenticado no backend: ${backendUser.admin_id} (${backendUser.role})`
-            : "Não autenticado no backend. Faça login Supabase."}
+            : "Nao autenticado no backend. Faca login Supabase."}
+        </div>
+        <div className="status-line">
+          {versionQuery.data
+            ? `API: ${versionQuery.data.service} v${versionQuery.data.version} (schema ${versionQuery.data.schema_version})`
+            : "API: versao indisponivel"}
         </div>
         {inlineMessage ? <div className={`status-line ${inlineError ? "error" : ""}`}>{inlineMessage}</div> : null}
       </div>

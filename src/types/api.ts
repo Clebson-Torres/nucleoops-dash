@@ -129,9 +129,68 @@ export type ApiError = {
   message: string;
 };
 
+export type AlertStatus = "open" | "ack" | "resolved";
+export type AlertSeverity = "warn" | "error";
+export type AlertType = "agent.offline" | "job.failed";
+
+export type Alert = {
+  id: number;
+  tenant_id: string;
+  alert_type: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  resource_type: "agent" | "job_execution";
+  resource_id: string;
+  status: AlertStatus;
+  first_seen_at: string;
+  last_seen_at: string;
+  occurrences: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AlertSummary = {
+  open_total: number;
+  open_warn: number;
+  open_error: number;
+  failed_last_15m: number;
+  offline_now: number;
+};
+
+export type AlertSettings = {
+  tenant_id: string;
+  offline_threshold_minutes: number;
+  job_failure_enabled: boolean;
+  webhook_enabled: boolean;
+  webhook_url?: string | null;
+  webhook_secret_configured: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UpdateAlertStatusRequest = {
+  status: AlertStatus;
+};
+
+export type UpdateAlertSettingsRequest = {
+  offline_threshold_minutes?: number;
+  job_failure_enabled?: boolean;
+  webhook_enabled?: boolean;
+  webhook_url?: string;
+  webhook_secret?: string;
+};
+
 export type AuthMe = {
   admin_id: string;
   role: Role;
+};
+
+export type ApiVersion = {
+  service: string;
+  version: string;
+  schema_version: number;
 };
 
 export type AdminUser = {
@@ -298,6 +357,11 @@ export type AgentDeploymentHost = {
   port: number;
   platform: string;
   status: string;
+  error?: {
+    code: string;
+    message: string;
+    hint?: string | null;
+  } | null;
   error_reason?: string | null;
   command_preview?: string | null;
   started_at?: string | null;

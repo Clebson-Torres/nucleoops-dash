@@ -24,6 +24,14 @@ jobs:
         run: |
           set -o pipefail
           npm run build 2>&1 | tee ci-build.log
+      - name: Install Playwright browser
+        run: |
+          set -o pipefail
+          npx playwright install --with-deps chromium 2>&1 | tee ci-playwright-install.log
+      - name: E2E smoke
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee ci-e2e.log
       - name: Upload CI logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -32,3 +40,7 @@ jobs:
           path: |
             ci-npm-ci.log
             ci-build.log
+            ci-playwright-install.log
+            ci-e2e.log
+            playwright-report
+            test-results/e2e-artifacts

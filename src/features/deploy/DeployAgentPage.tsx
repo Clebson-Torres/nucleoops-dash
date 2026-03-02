@@ -73,6 +73,56 @@ function downloadTextFile(fileName: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function toLinuxRuntimeUrl(raw: string): { expr: string; needsHostDiscovery: boolean } {
+  try {
+    const parsed = new URL(raw);
+    if (!isLoopbackHost(parsed.hostname)) {
+      return { expr: raw, needsHostDiscovery: false };
+    }
+    const port = parsed.port ? `:${parsed.port}` : "";
+    return {
+      expr: `${parsed.protocol}//\${WIN_HOST_IP}${port}${parsed.pathname}${parsed.search}${parsed.hash}`,
+      needsHostDiscovery: true,
+    };
+  } catch {
+    return { expr: raw, needsHostDiscovery: false };
+  }
+}
+
+function remapUrlToBase(rawUrl: string, baseUrl: string): string {
+  try {
+    const raw = new URL(rawUrl);
+    const base = new URL(baseUrl);
+    raw.protocol = base.protocol;
+    raw.hostname = base.hostname;
+    raw.port = base.port;
+    return raw.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function linuxWslHostDetectSnippet(): string[] {
+  return [
+    "if grep -qi microsoft /proc/version 2>/dev/null || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then",
+    "  WIN_HOST_IP=\"$(ip route | awk '/^default/ { print $3; exit }')\"",
+    "  [ -n \"$WIN_HOST_IP\" ] || { echo \"Falha ao resolver o IP do host Windows (WSL).\"; exit 1; }",
+    "else",
+    "  echo \"SERVER_BASE_URL com localhost/127.0.0.1 so funciona em WSL. Em Linux VM use URL de rede (ex: http://192.168.x.x:8080).\"",
+    "  exit 1",
+    "fi",
+  ];
+}
+
+function linuxWslHostDetectOneLiner(): string {
+  return "if grep -qi microsoft /proc/version 2>/dev/null || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then WIN_HOST_IP=\"$(ip route | awk '/^default/ { print $3; exit }')\"; [ -n \"$WIN_HOST_IP\" ] || { echo \"Falha ao resolver o IP do host Windows (WSL).\"; exit 1; }; else echo \"SERVER_BASE_URL com localhost/127.0.0.1 so funciona em WSL. Em Linux VM use URL de rede (ex: http://192.168.x.x:8080).\"; exit 1; fi";
+}
+
 export function DeployAgentPage() {
   const auth = useAuth();
   const toast = useToast();
@@ -152,8 +202,22 @@ export function DeployAgentPage() {
 
   const oneLinerLinux = useMemo(() => {
     if (!linuxArtifact || !tenantToken.trim()) return "";
-    return `curl -fsSL "${effectiveServerBase}/downloads/agent/install/linux.sh" | sudo BINARY_URL="${linuxArtifact.url}" BINARY_SHA256="${linuxArtifact.sha256}" TENANT_TOKEN="${tenantToken.trim()}" SERVER_BASE_URL="${effectiveServerBase}" bash`;
+    const normalizedArtifactUrl = remapUrlToBase(linuxArtifact.url, effectiveServerBase);
+    const scriptUrl = toLinuxRuntimeUrl(`${effectiveServerBase}/downloads/agent/install/linux.sh`);
+    const binaryUrl = toLinuxRuntimeUrl(normalizedArtifactUrl);
+    const serverUrl = toLinuxRuntimeUrl(effectiveServerBase);
+    const needsHostDiscovery = scriptUrl.needsHostDiscovery || binaryUrl.needsHostDiscovery;
+    const hostDetect = needsHostDiscovery
+      ? `${linuxWslHostDetectOneLiner()}; `
+      : "";
+    return `${hostDetect}curl -fsSL "${scriptUrl.expr}" | sudo BINARY_URL="${binaryUrl.expr}" BINARY_SHA256="${linuxArtifact.sha256}" TENANT_TOKEN="${tenantToken.trim()}" SERVER_BASE_URL="${serverUrl.expr}" bash`;
   }, [linuxArtifact, tenantToken, effectiveServerBase]);
+
+  const linuxAutoHostMode = useMemo(() => {
+    const server = toLinuxRuntimeUrl(effectiveServerBase);
+    const binary = linuxArtifact ? toLinuxRuntimeUrl(linuxArtifact.url) : { expr: "", needsHostDiscovery: false };
+    return server.needsHostDiscovery || binary.needsHostDiscovery;
+  }, [effectiveServerBase, linuxArtifact]);
 
   async function copyCommand(label: "Windows" | "Linux", command: string) {
     if (!command) {
@@ -198,12 +262,19 @@ export function DeployAgentPage() {
 
   function buildLinuxInstallerSh(): string {
     if (!linuxArtifact || !tenantToken.trim()) return "";
+    const normalizedArtifactUrl = remapUrlToBase(linuxArtifact.url, effectiveServerBase);
+    const server = toLinuxRuntimeUrl(effectiveServerBase);
+    const binary = toLinuxRuntimeUrl(normalizedArtifactUrl);
+    const needsHostDiscovery = server.needsHostDiscovery || binary.needsHostDiscovery;
     return [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `SERVER_BASE_URL="${effectiveServerBase}"`,
+      ...(needsHostDiscovery
+        ? linuxWslHostDetectSnippet()
+        : []),
+      `SERVER_BASE_URL="${server.expr}"`,
       `TENANT_TOKEN="${tenantToken.trim()}"`,
-      `BINARY_URL="${linuxArtifact.url}"`,
+      `BINARY_URL="${binary.expr}"`,
       `BINARY_SHA256="${linuxArtifact.sha256}"`,
       "curl -fsSL \"$SERVER_BASE_URL/downloads/agent/install/linux.sh\" | sudo BINARY_URL=\"$BINARY_URL\" BINARY_SHA256=\"$BINARY_SHA256\" TENANT_TOKEN=\"$TENANT_TOKEN\" SERVER_BASE_URL=\"$SERVER_BASE_URL\" bash",
     ].join("\n");
@@ -467,6 +538,12 @@ export function DeployAgentPage() {
               Linux {linuxArtifact ? `(v${linuxArtifact.version})` : "(sem artefato)"}
               <textarea value={oneLinerLinux} readOnly />
             </label>
+            {linuxAutoHostMode ? (
+              <p className="small">
+                Modo localhost detectado: em WSL o comando resolve o IP do host automaticamente; em Linux VM comum, use
+                Server base URL de rede (ex.: http://192.168.x.x:8080).
+              </p>
+            ) : null}
             <div className="row">
               <button type="button" onClick={() => void copyCommand("Linux", oneLinerLinux)}>
                 Copiar comando Linux
@@ -512,7 +589,9 @@ export function DeployAgentPage() {
                       {item.status}
                     </Badge>
                   </td>
-                  <td>{item.error_reason ?? "-"}</td>
+                  <td title={item.error?.hint ?? undefined}>
+                    {item.error ? `[${item.error.code}] ${item.error.message}` : item.error_reason ?? "-"}
+                  </td>
                   <td>{formatTime(item.updated_at)}</td>
                 </tr>
               ))}

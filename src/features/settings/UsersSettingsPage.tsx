@@ -9,6 +9,7 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "../../lib/api/client";
 import { useToast } from "../../components/ui/Toast";
 import { formatTime } from "../../lib/format";
 import type { AdminUser, AllowedCommand, InviteAdminUserResponse, OperationTemplate, Role } from "../../types/api";
+import { AlertsSettingsCard } from "./AlertsSettingsCard";
 
 function poll(intervalMs: number) {
   return () => (document.hidden ? false : intervalMs);
@@ -348,6 +349,8 @@ export function UsersSettingsPage() {
           )}
         </Card>
       </div>
+
+      <AlertsSettingsCard />
 
       <Card title="Operation Templates (admin)">
         {auth.role !== "admin" ? (

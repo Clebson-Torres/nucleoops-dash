@@ -27,6 +27,8 @@ type FixedTemplate = {
   name: string;
   label: string;
   commandText: string;
+  platform: "windows" | "linux" | "any";
+  category: "network" | "services" | "software" | "logs";
 };
 
 type QuickTemplate = {
@@ -36,17 +38,21 @@ type QuickTemplate = {
   commandText?: string;
   commandId?: number;
   commandName?: string;
+  platform?: "windows" | "linux" | "any";
+  category?: "network" | "services" | "software" | "logs";
 };
 
 const FIXED_TEMPLATES: FixedTemplate[] = [
-  { key: "win-dns-flush", name: "win-dns-flush", label: "Windows DNS Flush", commandText: "ipconfig /flushdns" },
-  { key: "win-gpupdate-force", name: "win-gpupdate-force", label: "Windows GPUpdate Force", commandText: "gpupdate /force" },
-  { key: "win-spooler-restart", name: "win-spooler-restart", label: "Windows Restart Spooler", commandText: "Restart-Service -Name 'Spooler' -Force" },
+  { key: "win-dns-flush", name: "win-dns-flush", label: "Windows DNS Flush", commandText: "ipconfig /flushdns", platform: "windows", category: "network" },
+  { key: "win-gpupdate-force", name: "win-gpupdate-force", label: "Windows GPUpdate Force", commandText: "gpupdate /force", platform: "windows", category: "services" },
+  { key: "win-spooler-restart", name: "win-spooler-restart", label: "Windows Restart Spooler", commandText: "Restart-Service -Name 'Spooler' -Force", platform: "windows", category: "services" },
   {
     key: "win-winget-upgrade-all",
     name: "win-winget-upgrade-all",
     label: "Windows Winget Upgrade All",
     commandText: "winget upgrade --all --silent --accept-package-agreements --accept-source-agreements",
+    platform: "windows",
+    category: "software",
   },
   {
     key: "win-disk-clean-temp",
@@ -54,42 +60,52 @@ const FIXED_TEMPLATES: FixedTemplate[] = [
     label: "Windows Clean Temp",
     commandText:
       "PowerShell -NoProfile -Command \"Get-ChildItem $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue\"",
+    platform: "windows",
+    category: "software",
   },
   {
     key: "win-quick-diagnostics",
     name: "win-quick-diagnostics",
     label: "Windows Quick Diagnostics",
     commandText: "systeminfo; ipconfig /all; Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 30",
+    platform: "windows",
+    category: "logs",
   },
-  { key: "linux-apt-update", name: "linux-apt-update", label: "Linux APT Update", commandText: "sudo apt-get update -y" },
+  { key: "linux-apt-update", name: "linux-apt-update", label: "Linux APT Update", commandText: "sudo -n apt-get update -y", platform: "linux", category: "software" },
   {
     key: "linux-apt-upgrade",
     name: "linux-apt-upgrade",
     label: "Linux APT Upgrade",
-    commandText: "sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+    commandText: "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+    platform: "linux",
+    category: "software",
   },
-  { key: "linux-disk-usage", name: "linux-disk-usage", label: "Linux Disk Usage", commandText: "df -h" },
-  { key: "linux-system-uptime", name: "linux-system-uptime", label: "Linux Uptime + Memory", commandText: "uptime && free -h" },
+  { key: "linux-disk-usage", name: "linux-disk-usage", label: "Linux Disk Usage", commandText: "df -h", platform: "linux", category: "logs" },
+  { key: "linux-system-uptime", name: "linux-system-uptime", label: "Linux Uptime + Memory", commandText: "uptime && free -h", platform: "linux", category: "logs" },
   {
     key: "linux-restart-service-template",
     name: "linux-restart-service-template",
     label: "Linux Restart Service (Template)",
-    commandText: "sudo systemctl restart <service_name>",
+    commandText: "sudo -n systemctl restart <service_name>",
+    platform: "linux",
+    category: "services",
   },
-  { key: "linux-journal-tail", name: "linux-journal-tail", label: "Linux Journal Tail", commandText: "sudo journalctl -n 200 --no-pager" },
+  { key: "linux-journal-tail", name: "linux-journal-tail", label: "Linux Journal Tail", commandText: "sudo -n journalctl -n 200 --no-pager", platform: "linux", category: "logs" },
 ];
 
 const EXECUTE_TEMPLATES: FixedTemplate[] = [
-  { key: "exec-auto", name: "exec-auto", label: "Auto by selected artifact", commandText: "{{auto_silent}}" },
-  { key: "exec-msi-silent", name: "exec-msi-silent", label: "Install MSI silent", commandText: "msiexec /i {{artifact_path}} /qn /norestart" },
+  { key: "exec-auto", name: "exec-auto", label: "Auto by selected artifact", commandText: "{{auto_silent}}", platform: "any", category: "software" },
+  { key: "exec-msi-silent", name: "exec-msi-silent", label: "Install MSI silent", commandText: "msiexec /i {{artifact_path}} /qn /norestart", platform: "windows", category: "software" },
   {
     key: "exec-exe-silent",
     name: "exec-exe-silent",
     label: "Install EXE silent",
     commandText: "Start-Process -FilePath {{artifact_path}} -ArgumentList '/S','/quiet','/norestart' -Wait",
+    platform: "windows",
+    category: "software",
   },
-  { key: "exec-ps1", name: "exec-ps1", label: "Run PS1 script", commandText: "powershell -NoProfile -ExecutionPolicy Bypass -File {{artifact_path}}" },
-  { key: "exec-cmd", name: "exec-cmd", label: "Run CMD/BAT script", commandText: "cmd /c {{artifact_path}}" },
+  { key: "exec-ps1", name: "exec-ps1", label: "Run PS1 script", commandText: "powershell -NoProfile -ExecutionPolicy Bypass -File {{artifact_path}}", platform: "windows", category: "software" },
+  { key: "exec-cmd", name: "exec-cmd", label: "Run CMD/BAT script", commandText: "cmd /c {{artifact_path}}", platform: "windows", category: "software" },
 ];
 
 type JobAction = "run_command" | "download_artifact" | "download_and_execute";
@@ -125,6 +141,8 @@ export function JobsPage() {
   const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null);
   const [selectedAllowedCommandId, setSelectedAllowedCommandId] = useState<number | null>(null);
   const [selectedQuickTemplateKey, setSelectedQuickTemplateKey] = useState<string>("");
+  const [templatePlatformFilter, setTemplatePlatformFilter] = useState<"all" | "windows" | "linux" | "any">("all");
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState<"all" | "network" | "services" | "software" | "logs">("all");
   const [useDirectCommand, setUseDirectCommand] = useState(true);
   const [jobFilter, setJobFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -198,6 +216,8 @@ export function JobsPage() {
         commandId: item.id,
         commandText: item.command_text,
         commandName: item.name,
+        platform: "any" as const,
+        category: "services" as const,
       }));
 
     const fixed = FIXED_TEMPLATES.map((item) => ({
@@ -206,10 +226,19 @@ export function JobsPage() {
       source: "fixed" as const,
       commandText: item.commandText,
       commandName: item.name,
+      platform: item.platform,
+      category: item.category,
     }));
 
-    return [...fixed, ...adminCommands];
-  }, [allowedCommandsQuery.data]);
+    return [...fixed, ...adminCommands].filter((item) => {
+      const platformOk =
+        templatePlatformFilter === "all" ||
+        item.platform === templatePlatformFilter ||
+        item.platform === "any";
+      const categoryOk = templateCategoryFilter === "all" || item.category === templateCategoryFilter;
+      return platformOk && categoryOk;
+    });
+  }, [allowedCommandsQuery.data, templatePlatformFilter, templateCategoryFilter]);
 
   const executeTemplates = useMemo<QuickTemplate[]>(() => {
     return EXECUTE_TEMPLATES.map((item) => ({
@@ -218,6 +247,8 @@ export function JobsPage() {
       source: "execute" as const,
       commandText: item.commandText,
       commandName: item.name,
+      platform: item.platform,
+      category: item.category,
     }));
   }, []);
 
@@ -432,6 +463,29 @@ export function JobsPage() {
                   </label>
                 ) : null}
               </div>
+              {!isDownloadAndExecute ? (
+                <div className="row">
+                  <label>
+                    Plataforma template
+                    <select value={templatePlatformFilter} onChange={(event) => setTemplatePlatformFilter(event.target.value as "all" | "windows" | "linux" | "any")}>
+                      <option value="all">all</option>
+                      <option value="windows">windows</option>
+                      <option value="linux">linux</option>
+                      <option value="any">any</option>
+                    </select>
+                  </label>
+                  <label>
+                    Categoria template
+                    <select value={templateCategoryFilter} onChange={(event) => setTemplateCategoryFilter(event.target.value as "all" | "network" | "services" | "software" | "logs")}>
+                      <option value="all">all</option>
+                      <option value="network">network</option>
+                      <option value="services">services</option>
+                      <option value="software">software</option>
+                      <option value="logs">logs</option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
 
               {!isDownloadAndExecute ? (
                 <select
