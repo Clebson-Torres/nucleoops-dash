@@ -12,7 +12,7 @@ function buildHeaders(auth: AuthHeaderState, extra?: HeadersInit): Headers {
 
 function ensureToken(auth: AuthHeaderState) {
   if (!auth.accessToken) {
-    throw new Error("Faça login no Supabase para continuar.");
+    throw new Error("Faca login no Supabase para continuar.");
   }
 }
 
@@ -43,6 +43,14 @@ export async function apiGet<T>(path: string, auth: AuthHeaderState): Promise<T>
   return (await response.json()) as T;
 }
 
+export async function apiGetPublic<T>(path: string): Promise<T> {
+  const response = await fetch(`/api${path}`);
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  return (await response.json()) as T;
+}
+
 export async function apiPost<T>(path: string, body: unknown, auth: AuthHeaderState): Promise<T> {
   ensureToken(auth);
   const response = await fetch(`/api${path}`, {
@@ -52,6 +60,9 @@ export async function apiPost<T>(path: string, body: unknown, auth: AuthHeaderSt
   });
   if (!response.ok) {
     await throwApiError(response);
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return (await response.json()) as T;
 }
@@ -65,6 +76,25 @@ export async function apiPatch<T>(path: string, body: unknown, auth: AuthHeaderS
   });
   if (!response.ok) {
     await throwApiError(response);
+  }
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+}
+
+export async function apiPut<T>(path: string, body: unknown, auth: AuthHeaderState): Promise<T> {
+  ensureToken(auth);
+  const response = await fetch(`/api${path}`, {
+    method: "PUT",
+    headers: buildHeaders(auth, { "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+  if (response.status === 204) {
+    return undefined as T;
   }
   return (await response.json()) as T;
 }
@@ -101,3 +131,4 @@ export async function fetchMe(auth: AuthHeaderState): Promise<AuthMe | null> {
   }
   return (await response.json()) as AuthMe;
 }
+

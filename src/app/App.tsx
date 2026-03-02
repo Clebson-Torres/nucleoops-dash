@@ -13,7 +13,8 @@ export function AppShell() {
     const query = new URLSearchParams(window.location.search);
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const flow = hash.get("type") ?? query.get("type");
-    if ((flow === "invite" || flow === "recovery") && location.pathname !== "/auth") {
+    const hasAuthCode = Boolean(query.get("code") || query.get("token_hash"));
+    if ((flow === "invite" || flow === "recovery" || hasAuthCode) && location.pathname !== "/auth") {
       navigate(`/auth${window.location.search}${window.location.hash}`, { replace: true });
     }
   }, [location.pathname, navigate]);

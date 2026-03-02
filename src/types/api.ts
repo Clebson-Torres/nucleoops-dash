@@ -1,6 +1,13 @@
 ﻿export type Role = "admin" | "support";
 export type RolloutProfile = "safe" | "balanced" | "fast";
 export type ServiceMode = "windows_service" | "systemd" | "manual";
+export type OperationCategory = "network" | "services" | "software" | "logs";
+export type OperationType =
+  | "network_ping"
+  | "network_speed"
+  | "service_control"
+  | "software_uninstall"
+  | "log_collect";
 
 export type Agent = {
   tenant_id: string;
@@ -23,6 +30,89 @@ export type AgentsHealthSummary = {
   healthy_last_5m: number;
 };
 
+export type NetworkProbeStatus = "online" | "offline" | "unknown";
+
+export type NetworkProbe = {
+  id: number;
+  tenant_id: string;
+  name: string;
+  ip_address: string;
+  location?: string | null;
+  interval_seconds: number;
+  timeout_ms: number;
+  active: boolean;
+  last_status: NetworkProbeStatus | string;
+  last_latency_ms?: number | null;
+  last_error?: string | null;
+  last_checked_at?: string | null;
+  consecutive_failures: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NetworkProbesSummary = {
+  total: number;
+  online: number;
+  offline: number;
+  unknown: number;
+};
+
+export type CreateNetworkProbeRequest = {
+  name: string;
+  ip_address: string;
+  location?: string;
+  interval_seconds?: number;
+  timeout_ms?: number;
+  active?: boolean;
+};
+
+export type UpdateNetworkProbeRequest = {
+  name?: string;
+  ip_address?: string;
+  location?: string;
+  interval_seconds?: number;
+  timeout_ms?: number;
+  active?: boolean;
+};
+
+export type NetworkDiscoveryRequest = {
+  cidr?: string;
+  save_as_probes: boolean;
+  interval_seconds: number;
+  timeout_ms: number;
+  location?: string;
+};
+
+export type NetworkDiscoveryDevice = {
+  ip_address: string;
+  host_name?: string | null;
+  mac_address?: string | null;
+  is_gateway: boolean;
+  latency_ms?: number | null;
+  saved_probe_id?: number | null;
+};
+
+export type NetworkDiscoveryResponse = {
+  cidr_used: string;
+  local_hostname?: string | null;
+  local_ip?: string | null;
+  gateway_ip?: string | null;
+  gateway_mac?: string | null;
+  scanned_hosts: number;
+  online_hosts: number;
+  saved_probes: number;
+  devices: NetworkDiscoveryDevice[];
+};
+
+export type NetworkProbeCheck = {
+  id: number;
+  probe_id: number;
+  status: NetworkProbeStatus | string;
+  latency_ms?: number | null;
+  error_message?: string | null;
+  checked_at: string;
+};
+
 export type Job = {
   id: number;
   name: string;
@@ -43,7 +133,15 @@ export type Job = {
 
 export type JobCreateRequest = {
   name: string;
-  action_type: "run_command" | "download_artifact" | "download_and_execute";
+  action_type:
+    | "run_command"
+    | "download_artifact"
+    | "download_and_execute"
+    | "network_ping"
+    | "network_speed"
+    | "service_control"
+    | "software_uninstall"
+    | "log_collect";
   command?: string;
   command_id?: number;
   artifact_id?: number;
@@ -106,6 +204,7 @@ export type AllowedCommand = {
   command_text: string;
   description?: string | null;
   active: boolean;
+  created_by?: string | null;
 };
 
 export type ApiError = {
@@ -113,9 +212,68 @@ export type ApiError = {
   message: string;
 };
 
+export type AlertStatus = "open" | "ack" | "resolved";
+export type AlertSeverity = "warn" | "error";
+export type AlertType = "agent.offline" | "job.failed";
+
+export type Alert = {
+  id: number;
+  tenant_id: string;
+  alert_type: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  resource_type: "agent" | "job_execution";
+  resource_id: string;
+  status: AlertStatus;
+  first_seen_at: string;
+  last_seen_at: string;
+  occurrences: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AlertSummary = {
+  open_total: number;
+  open_warn: number;
+  open_error: number;
+  failed_last_15m: number;
+  offline_now: number;
+};
+
+export type AlertSettings = {
+  tenant_id: string;
+  offline_threshold_minutes: number;
+  job_failure_enabled: boolean;
+  webhook_enabled: boolean;
+  webhook_url?: string | null;
+  webhook_secret_configured: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UpdateAlertStatusRequest = {
+  status: AlertStatus;
+};
+
+export type UpdateAlertSettingsRequest = {
+  offline_threshold_minutes?: number;
+  job_failure_enabled?: boolean;
+  webhook_enabled?: boolean;
+  webhook_url?: string;
+  webhook_secret?: string;
+};
+
 export type AuthMe = {
   admin_id: string;
   role: Role;
+};
+
+export type ApiVersion = {
+  service: string;
+  version: string;
+  schema_version: number;
 };
 
 export type AdminUser = {
@@ -136,6 +294,52 @@ export type InviteAdminUserRequest = {
 export type InviteAdminUserResponse = {
   invited: boolean;
   user: AdminUser;
+};
+
+export type OperationTemplate = {
+  id: number;
+  key: string;
+  name: string;
+  category: OperationCategory;
+  platform: "windows" | "linux" | "any";
+  operation_type: OperationType;
+  parameter_schema: Record<string, unknown>;
+  command_template?: string | null;
+  active: boolean;
+  admin_only: boolean;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExecuteOperationRequest = {
+  template_key: string;
+  target_agent_ids: string[];
+  params: Record<string, unknown>;
+  rollout_profile?: RolloutProfile;
+};
+
+export type ExecuteOperationResponse = {
+  job_id: number;
+  resolved_action_type: string;
+  resolved_command_preview: string;
+};
+
+export type AgentLogsQueryRequest = {
+  source: "event_system" | "event_application" | "event_security" | "journal";
+  level?: "info" | "warn" | "error" | "critical";
+  since_minutes?: number;
+  limit_lines?: number;
+  contains?: string;
+};
+
+export type JobLogResult = {
+  execution_id: number;
+  agent_id: string;
+  status: string;
+  stdout?: string | null;
+  stderr?: string | null;
+  updated_at: string;
 };
 
 export type AgentDetails = {
@@ -167,4 +371,122 @@ export type AgentDetails = {
   } | null;
   latest_snapshot_received_at?: string | null;
   latest_collected_at_unix_ms?: number | null;
+};
+
+export type DeploymentCredential = {
+  id: number;
+  name: string;
+  kind: "ssh_key" | "ssh_password" | "winrm_password";
+  username: string;
+  description?: string | null;
+  active: boolean;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateDeploymentCredentialRequest = {
+  name: string;
+  kind: "ssh_key" | "ssh_password" | "winrm_password";
+  username: string;
+  secret: string;
+  description?: string | null;
+};
+
+export type DeploymentHostInput = {
+  host: string;
+  port?: number;
+  platform?: "windows" | "linux";
+};
+
+export type CreateAgentDeploymentRequest = {
+  tenant_id: string;
+  platform: "windows" | "linux" | "mixed";
+  transport: "ssh" | "winrm";
+  hosts: DeploymentHostInput[];
+  credential_ref: number;
+  agent_version: string;
+  rollout_profile?: RolloutProfile;
+  dry_run?: boolean;
+};
+
+export type CreateAgentDeploymentResponse = {
+  deployment_id: number;
+  job_id?: number | null;
+};
+
+export type AgentDeployment = {
+  id: number;
+  tenant_id: string;
+  platform: string;
+  transport: string;
+  credential_ref: number;
+  agent_version: string;
+  rollout_profile: string;
+  dry_run: boolean;
+  status: string;
+  total_hosts: number;
+  success_hosts: number;
+  failed_hosts: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AgentDeploymentHost = {
+  id: number;
+  deployment_id: number;
+  host: string;
+  port: number;
+  platform: string;
+  status: string;
+  error?: {
+    code: string;
+    message: string;
+    hint?: string | null;
+  } | null;
+  error_reason?: string | null;
+  command_preview?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at: string;
+};
+
+export type AgentDeploymentDetails = {
+  deployment: AgentDeployment;
+  hosts: AgentDeploymentHost[];
+};
+
+export type RetryDeploymentResponse = {
+  deployment_id: number;
+  retried_hosts: number;
+};
+
+export type AgentDownloadArtifact = {
+  platform: "windows" | "linux";
+  arch: string;
+  version: string;
+  filename: string;
+  sha256: string;
+  size_bytes: number;
+  url: string;
+};
+
+export type AgentDownloadManifest = {
+  generated_at: string;
+  artifacts: AgentDownloadArtifact[];
+};
+
+export type TenantSummary = {
+  tenant_id: string;
+  name: string;
+  active: boolean;
+  metrics_url: string;
+  register_url: string;
+  report_interval_seconds: number;
+  poll_interval_seconds: number;
+  max_services: number;
+  max_installed_apps: number;
+  created_at: string;
+  updated_at: string;
 };

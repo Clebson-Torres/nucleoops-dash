@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { Card } from "../../components/ui/Card";
@@ -9,12 +9,103 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth } from "../../lib/auth/AuthContext";
 import { apiGet, apiPost, apiPostForm } from "../../lib/api/client";
 import { formatBytes, formatTime, sanitizePath, summarizeOutput } from "../../lib/format";
-import type { AllowedCommand, Agent, Artifact, Job, JobCreateRequest, JobCreateResponse, JobExecution, JobWave, RolloutProfile } from "../../types/api";
+import type {
+  AllowedCommand,
+  Agent,
+  Artifact,
+  Job,
+  JobCreateRequest,
+  JobCreateResponse,
+  JobExecution,
+  JobWave,
+  RolloutProfile,
+} from "../../types/api";
 import { useToast } from "../../components/ui/Toast";
 
-const COMMAND_TEMPLATES = [
-  { id: "run_ps_update", label: "Windows Update Scan", command: "UsoClient StartScan" },
-  { id: "run_create_dir", label: "Criar Pasta", command: "New-Item -ItemType Directory -Force -Path 'C:\\ProgramData\\MonitoringAgent\\work'" },
+type FixedTemplate = {
+  key: string;
+  name: string;
+  label: string;
+  commandText: string;
+  platform: "windows" | "linux" | "any";
+  category: "network" | "services" | "software" | "logs";
+};
+
+type QuickTemplate = {
+  key: string;
+  label: string;
+  source: "fixed" | "admin" | "execute";
+  commandText?: string;
+  commandId?: number;
+  commandName?: string;
+  platform?: "windows" | "linux" | "any";
+  category?: "network" | "services" | "software" | "logs";
+};
+
+const FIXED_TEMPLATES: FixedTemplate[] = [
+  { key: "win-dns-flush", name: "win-dns-flush", label: "Windows DNS Flush", commandText: "ipconfig /flushdns", platform: "windows", category: "network" },
+  { key: "win-gpupdate-force", name: "win-gpupdate-force", label: "Windows GPUpdate Force", commandText: "gpupdate /force", platform: "windows", category: "services" },
+  { key: "win-spooler-restart", name: "win-spooler-restart", label: "Windows Restart Spooler", commandText: "Restart-Service -Name 'Spooler' -Force", platform: "windows", category: "services" },
+  {
+    key: "win-winget-upgrade-all",
+    name: "win-winget-upgrade-all",
+    label: "Windows Winget Upgrade All",
+    commandText: "winget upgrade --all --silent --accept-package-agreements --accept-source-agreements",
+    platform: "windows",
+    category: "software",
+  },
+  {
+    key: "win-disk-clean-temp",
+    name: "win-disk-clean-temp",
+    label: "Windows Clean Temp",
+    commandText:
+      "PowerShell -NoProfile -Command \"Get-ChildItem $env:TEMP -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue\"",
+    platform: "windows",
+    category: "software",
+  },
+  {
+    key: "win-quick-diagnostics",
+    name: "win-quick-diagnostics",
+    label: "Windows Quick Diagnostics",
+    commandText: "systeminfo; ipconfig /all; Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 30",
+    platform: "windows",
+    category: "logs",
+  },
+  { key: "linux-apt-update", name: "linux-apt-update", label: "Linux APT Update", commandText: "sudo -n apt-get update -y", platform: "linux", category: "software" },
+  {
+    key: "linux-apt-upgrade",
+    name: "linux-apt-upgrade",
+    label: "Linux APT Upgrade",
+    commandText: "sudo -n env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+    platform: "linux",
+    category: "software",
+  },
+  { key: "linux-disk-usage", name: "linux-disk-usage", label: "Linux Disk Usage", commandText: "df -h", platform: "linux", category: "logs" },
+  { key: "linux-system-uptime", name: "linux-system-uptime", label: "Linux Uptime + Memory", commandText: "uptime && free -h", platform: "linux", category: "logs" },
+  {
+    key: "linux-restart-service-template",
+    name: "linux-restart-service-template",
+    label: "Linux Restart Service (Template)",
+    commandText: "sudo -n systemctl restart <service_name>",
+    platform: "linux",
+    category: "services",
+  },
+  { key: "linux-journal-tail", name: "linux-journal-tail", label: "Linux Journal Tail", commandText: "sudo -n journalctl -n 200 --no-pager", platform: "linux", category: "logs" },
+];
+
+const EXECUTE_TEMPLATES: FixedTemplate[] = [
+  { key: "exec-auto", name: "exec-auto", label: "Auto by selected artifact", commandText: "{{auto_silent}}", platform: "any", category: "software" },
+  { key: "exec-msi-silent", name: "exec-msi-silent", label: "Install MSI silent", commandText: "msiexec /i {{artifact_path}} /qn /norestart", platform: "windows", category: "software" },
+  {
+    key: "exec-exe-silent",
+    name: "exec-exe-silent",
+    label: "Install EXE silent",
+    commandText: "Start-Process -FilePath {{artifact_path}} -ArgumentList '/S','/quiet','/norestart' -Wait",
+    platform: "windows",
+    category: "software",
+  },
+  { key: "exec-ps1", name: "exec-ps1", label: "Run PS1 script", commandText: "powershell -NoProfile -ExecutionPolicy Bypass -File {{artifact_path}}", platform: "windows", category: "software" },
+  { key: "exec-cmd", name: "exec-cmd", label: "Run CMD/BAT script", commandText: "cmd /c {{artifact_path}}", platform: "windows", category: "software" },
 ];
 
 type JobAction = "run_command" | "download_artifact" | "download_and_execute";
@@ -49,12 +140,16 @@ export function JobsPage() {
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<number | null>(null);
   const [selectedAllowedCommandId, setSelectedAllowedCommandId] = useState<number | null>(null);
+  const [selectedQuickTemplateKey, setSelectedQuickTemplateKey] = useState<string>("");
+  const [templatePlatformFilter, setTemplatePlatformFilter] = useState<"all" | "windows" | "linux" | "any">("all");
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState<"all" | "network" | "services" | "software" | "logs">("all");
   const [useDirectCommand, setUseDirectCommand] = useState(true);
   const [jobFilter, setJobFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedExecution, setSelectedExecution] = useState<JobExecution | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [showAllJobs, setShowAllJobs] = useState(false);
 
   const agentsQuery = useQuery({
     queryKey: ["jobs-agents", headers.accessToken],
@@ -96,24 +191,90 @@ export function JobsPage() {
 
   const filteredJobs = useMemo(() => {
     const list = jobsQuery.data ?? [];
-    return list.filter((job) => {
+    const filtered = list.filter((job) => {
       const matchesStatus = statusFilter === "all" || job.status === statusFilter;
       const needle = jobFilter.trim().toLowerCase();
       const matchesText = !needle || `${job.id} ${job.name} ${job.action_type}`.toLowerCase().includes(needle);
       return matchesStatus && matchesText;
     });
+
+    return filtered.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
   }, [jobsQuery.data, jobFilter, statusFilter]);
+
+  const visibleJobs = useMemo(() => {
+    if (showAllJobs) return filteredJobs;
+    return filteredJobs.slice(0, 10);
+  }, [filteredJobs, showAllJobs]);
+
+  const quickTemplates = useMemo<QuickTemplate[]>(() => {
+    const adminCommands = (allowedCommandsQuery.data ?? [])
+      .filter((item) => item.active && item.created_by && item.created_by !== "system")
+      .map((item) => ({
+        key: `admin:${item.id}`,
+        label: `${item.name} [Admin]`,
+        source: "admin" as const,
+        commandId: item.id,
+        commandText: item.command_text,
+        commandName: item.name,
+        platform: "any" as const,
+        category: "services" as const,
+      }));
+
+    const fixed = FIXED_TEMPLATES.map((item) => ({
+      key: `fixed:${item.key}`,
+      label: `${item.label} [Padrao]`,
+      source: "fixed" as const,
+      commandText: item.commandText,
+      commandName: item.name,
+      platform: item.platform,
+      category: item.category,
+    }));
+
+    return [...fixed, ...adminCommands].filter((item) => {
+      const platformOk =
+        templatePlatformFilter === "all" ||
+        item.platform === templatePlatformFilter ||
+        item.platform === "any";
+      const categoryOk = templateCategoryFilter === "all" || item.category === templateCategoryFilter;
+      return platformOk && categoryOk;
+    });
+  }, [allowedCommandsQuery.data, templatePlatformFilter, templateCategoryFilter]);
+
+  const executeTemplates = useMemo<QuickTemplate[]>(() => {
+    return EXECUTE_TEMPLATES.map((item) => ({
+      key: `execute:${item.key}`,
+      label: `${item.label} [Execucao]`,
+      source: "execute" as const,
+      commandText: item.commandText,
+      commandName: item.name,
+      platform: item.platform,
+      category: item.category,
+    }));
+  }, []);
 
   const needsArtifact = action === "download_artifact" || action === "download_and_execute";
   const needsCommand = action === "run_command" || action === "download_and_execute";
+  const isDownloadAndExecute = action === "download_and_execute";
   const role = auth.role ?? "admin";
   const forceAllowList = role === "support";
+  const displayedQuickTemplates = action === "download_and_execute" ? executeTemplates : quickTemplates;
 
   useEffect(() => {
     if (role === "support" && action === "download_and_execute") {
       setAction("run_command");
     }
   }, [role, action]);
+
+  useEffect(() => {
+    setSelectedQuickTemplateKey("");
+  }, [action]);
+
+  useEffect(() => {
+    if (isDownloadAndExecute) {
+      setUseDirectCommand(true);
+      setSelectedAllowedCommandId(null);
+    }
+  }, [isDownloadAndExecute]);
 
   function toggleTarget(agentId: string, checked: boolean) {
     setSelectedTargets((prev) => {
@@ -122,9 +283,39 @@ export function JobsPage() {
     });
   }
 
-  function applyTemplate(templateId: string) {
-    const template = COMMAND_TEMPLATES.find((item) => item.id === templateId);
-    if (template) setCommand(template.command);
+  function applyTemplate(templateKey: string) {
+    setSelectedQuickTemplateKey(templateKey);
+    const selected = displayedQuickTemplates.find((item) => item.key === templateKey);
+    if (!selected) return;
+
+    if (selected.source === "execute") {
+      const raw = selected.commandText ?? "";
+      if (raw === "{{auto_silent}}") {
+        const selectedArtifact = (artifactsQuery.data ?? []).find((item) => item.id === selectedArtifactId);
+        setCommand(autoSilentCommand(selectedArtifact?.file_name));
+      } else {
+        setCommand(raw);
+      }
+      return;
+    }
+
+    if (selected.source === "admin") {
+      if (selected.commandId) setSelectedAllowedCommandId(selected.commandId);
+      if (role === "admin" && selected.commandText) setCommand(selected.commandText);
+      return;
+    }
+
+    const matchedAllow = (allowedCommandsQuery.data ?? []).find((item) => item.active && item.name === selected.commandName);
+
+    if (matchedAllow) {
+      setSelectedAllowedCommandId(matchedAllow.id);
+    }
+
+    if (role === "admin") {
+      if (selected.commandText) setCommand(selected.commandText);
+    } else if (!matchedAllow) {
+      toast.showError("Template requer aprovacao allowlist para suporte.");
+    }
   }
 
   async function createJob() {
@@ -196,7 +387,7 @@ export function JobsPage() {
 
   return (
     <div className="page-content">
-      <PageHeader title="Jobs" subtitle="Rollout em ondas, execução e rastreabilidade operacional" />
+      <PageHeader title="Jobs" subtitle="Rollout em ondas, execucao e rastreabilidade operacional" />
 
       <div className="two-col-grid">
         <Card title="Criar Job">
@@ -206,7 +397,7 @@ export function JobsPage() {
               <input value={name} onChange={(event) => setName(event.target.value)} />
             </label>
             <label>
-              Ação
+              Acao
               <select value={action} onChange={(event) => setAction(event.target.value as JobAction)}>
                 <option value="run_command">run_command</option>
                 <option value="download_artifact">download_artifact</option>
@@ -232,48 +423,87 @@ export function JobsPage() {
               <input type="checkbox" checked={manualBatch} onChange={(event) => setManualBatch(event.target.checked)} />
               Ajuste manual de batch
             </label>
-            <input type="number" min={1} value={batchSize} disabled={!manualBatch} onChange={(event) => setBatchSize(Number(event.target.value || 1))} />
-            <input type="number" min={0} value={batchDelaySeconds} disabled={!manualBatch} onChange={(event) => setBatchDelaySeconds(Number(event.target.value || 0))} />
           </div>
+          {manualBatch ? (
+            <div className="row">
+              <label>
+                Batch size
+                <input type="number" min={1} value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value || 1))} />
+              </label>
+              <label>
+                Delay entre ondas (s)
+                <input type="number" min={0} value={batchDelaySeconds} onChange={(event) => setBatchDelaySeconds(Number(event.target.value || 0))} />
+              </label>
+            </div>
+          ) : null}
 
           {needsCommand ? (
             <>
               {forceAllowList ? <p className="small">Perfil support: apenas command_id allowlist e permitido.</p> : null}
               <div className="row">
-                <select onChange={(event) => applyTemplate(event.target.value)} defaultValue="">
+                <select value={selectedQuickTemplateKey} onChange={(event) => applyTemplate(event.target.value)}>
                   <option value="" disabled>
-                    Template rápido
+                    Template rapido
                   </option>
-                  {COMMAND_TEMPLATES.map((template) => (
-                    <option key={template.id} value={template.id}>
+                  {displayedQuickTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>
                       {template.label}
                     </option>
                   ))}
                 </select>
-                <label className="check-inline">
-                  <input
-                    type="checkbox"
-                    checked={forceAllowList ? false : useDirectCommand}
-                    disabled={forceAllowList}
-                    onChange={(event) => setUseDirectCommand(event.target.checked)}
-                  />
-                  Comando direto (admin)
-                </label>
+                {!isDownloadAndExecute ? (
+                  <label className="check-inline">
+                    <input
+                      type="checkbox"
+                      checked={forceAllowList ? false : useDirectCommand}
+                      disabled={forceAllowList}
+                      onChange={(event) => setUseDirectCommand(event.target.checked)}
+                    />
+                    Comando direto (admin)
+                  </label>
+                ) : null}
               </div>
+              {!isDownloadAndExecute ? (
+                <div className="row">
+                  <label>
+                    Plataforma template
+                    <select value={templatePlatformFilter} onChange={(event) => setTemplatePlatformFilter(event.target.value as "all" | "windows" | "linux" | "any")}>
+                      <option value="all">all</option>
+                      <option value="windows">windows</option>
+                      <option value="linux">linux</option>
+                      <option value="any">any</option>
+                    </select>
+                  </label>
+                  <label>
+                    Categoria template
+                    <select value={templateCategoryFilter} onChange={(event) => setTemplateCategoryFilter(event.target.value as "all" | "network" | "services" | "software" | "logs")}>
+                      <option value="all">all</option>
+                      <option value="network">network</option>
+                      <option value="services">services</option>
+                      <option value="software">software</option>
+                      <option value="logs">logs</option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
 
-              <select
-                value={selectedAllowedCommandId ?? ""}
-                onChange={(event) => setSelectedAllowedCommandId(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="">Comando permitido (opcional para admin)</option>
-                {(allowedCommandsQuery.data ?? [])
-                  .filter((item) => item.active)
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      #{item.id} {item.name}
-                    </option>
-                  ))}
-              </select>
+              {!isDownloadAndExecute ? (
+                <select
+                  value={selectedAllowedCommandId ?? ""}
+                  onChange={(event) => setSelectedAllowedCommandId(event.target.value ? Number(event.target.value) : null)}
+                >
+                  <option value="">Comando permitido (opcional para admin)</option>
+                  {(allowedCommandsQuery.data ?? [])
+                    .filter((item) => item.active)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        #{item.id} {item.name}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                <p className="small">Modo download_and_execute: use os templates de execucao acima.</p>
+              )}
 
               <textarea
                 disabled={forceAllowList || !useDirectCommand}
@@ -336,7 +566,7 @@ export function JobsPage() {
 
         <Card title="Lista de Jobs">
           <div className="row">
-            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/ação" />
+            <input value={jobFilter} onChange={(event) => setJobFilter(event.target.value)} placeholder="Buscar por id/nome/Acao" />
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">Todos</option>
               <option value="pending">pending</option>
@@ -349,8 +579,8 @@ export function JobsPage() {
           {filteredJobs.length === 0 ? (
             <EmptyState title="Nenhum job encontrado" subtitle="Ajuste filtros ou crie um novo job." />
           ) : (
-            <Table headers={["ID", "Nome", "Status", "Rollout", "Atualizado", "Ações"]}>
-              {filteredJobs.map((job) => (
+            <Table headers={["ID", "Nome", "Status", "Rollout", "Atualizado", "Acoes"]}>
+              {visibleJobs.map((job) => (
                 <tr key={job.id}>
                   <td>{job.id}</td>
                   <td>{job.name}</td>
@@ -363,21 +593,28 @@ export function JobsPage() {
                   <td>{formatTime(job.updated_at)}</td>
                   <td>
                     <button className="btn-secondary" type="button" onClick={() => setSelectedJob(job)}>
-                      Ver execuções
+                      Ver execucoes
                     </button>
                   </td>
                 </tr>
               ))}
             </Table>
           )}
+          {filteredJobs.length > 10 ? (
+            <div className="row">
+              <button className="btn-secondary" type="button" onClick={() => setShowAllJobs((prev) => !prev)}>
+                {showAllJobs ? "Mostrar apenas 10 ultimas" : `Expandir lista (${filteredJobs.length})`}
+              </button>
+            </div>
+          ) : null}
         </Card>
       </div>
 
-      <Modal open={Boolean(selectedJob)} title={`Execuções do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
+      <Modal open={Boolean(selectedJob)} title={`execucoes do Job ${selectedJob?.id ?? ""}`} onClose={() => setSelectedJob(null)} wide>
         {(executionsQuery.data ?? []).length === 0 ? (
-          <EmptyState title="Sem execuções" subtitle="Aguardando primeiro resultado dos agents." />
+          <EmptyState title="Sem execucoes" subtitle="Aguardando primeiro resultado dos agents." />
         ) : (
-          <Table headers={["Exec", "Agent", "Status", "Wave", "Tentativas", "Exit", "Saída", "Atualizado", "Ações"]}>
+          <Table headers={["Exec", "Agent", "Status", "Wave", "Tentativas", "Exit", "Saida", "Atualizado", "Acoes"]}>
             {(executionsQuery.data ?? []).map((execution) => (
               <tr key={execution.id}>
                 <td>{execution.id}</td>
@@ -426,7 +663,7 @@ export function JobsPage() {
         )}
       </Modal>
 
-      <Modal open={Boolean(selectedExecution)} title={`Log Execução ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
+      <Modal open={Boolean(selectedExecution)} title={`Log execucao ${selectedExecution?.id ?? ""}`} onClose={() => setSelectedExecution(null)}>
         {selectedExecution ? (
           <pre className="log-pre">{[
             `status: ${selectedExecution.status}`,
@@ -448,4 +685,5 @@ export function JobsPage() {
     </div>
   );
 }
+
 
