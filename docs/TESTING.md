@@ -43,6 +43,11 @@ Required env vars:
 - `E2E_LIVE_PASSWORD=<supabase_admin_password>`
 - `E2E_LIVE_AGENT_ID=<agent_id_from_agents_page>`
 - Optional: `E2E_LIVE_COMMAND=<command>` (default: `echo e2e-live`)
+- Optional admin-only coverage:
+  - `E2E_LIVE_ADMIN_EMAIL`
+  - `E2E_LIVE_ADMIN_PASSWORD`
+  - `E2E_LIVE_ADMIN_AGENT_ID`
+  - `E2E_LIVE_EXECUTE_COMMAND`
 
 Run:
 ```powershell
@@ -55,9 +60,14 @@ npm run test:e2e:live
 ```
 
 Scenario:
-1. Login in topbar
-2. Navigate to `/jobs`
-3. Create `run_command` job
-4. Select real target agent
-5. Open `Ver execucoes`
-6. Wait until final status (`success|failed|timeout`)
+1. Support:
+- `run_command` via allowlist
+- `download_artifact`
+2. Admin (if admin env vars are set):
+- `run_command` direto
+- `download_artifact`
+- `download_and_execute`
+3. Every job:
+- real click flow
+- `POST /jobs` response check
+- wait for final execution status (`success|failed|timeout`)
