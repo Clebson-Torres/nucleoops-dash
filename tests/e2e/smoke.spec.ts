@@ -11,6 +11,7 @@ test.describe("dashboard smoke", () => {
     await page.goto("/overview");
     await expect(page.getByRole("button", { name: "Entrar" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Esqueci a senha" })).toBeVisible();
+    await expect(page.getByText(/^API:/)).toBeVisible();
   });
 
   test("deploy page is restricted for non-admin session", async ({ page }) => {
