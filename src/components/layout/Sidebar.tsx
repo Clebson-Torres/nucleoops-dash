@@ -26,6 +26,9 @@ export function Sidebar() {
         <NavLink to="/agents" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
           Agents
         </NavLink>
+        <NavLink to="/network" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+          Network
+        </NavLink>
         {auth.role === "admin" ? (
           <NavLink to="/deploy" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
             Deploy Agent
@@ -40,4 +43,3 @@ export function Sidebar() {
     </aside>
   );
 }
-

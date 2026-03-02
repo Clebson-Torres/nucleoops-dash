@@ -30,6 +30,60 @@ export type AgentsHealthSummary = {
   healthy_last_5m: number;
 };
 
+export type NetworkProbeStatus = "online" | "offline" | "unknown";
+
+export type NetworkProbe = {
+  id: number;
+  tenant_id: string;
+  name: string;
+  ip_address: string;
+  location?: string | null;
+  interval_seconds: number;
+  timeout_ms: number;
+  active: boolean;
+  last_status: NetworkProbeStatus | string;
+  last_latency_ms?: number | null;
+  last_error?: string | null;
+  last_checked_at?: string | null;
+  consecutive_failures: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NetworkProbesSummary = {
+  total: number;
+  online: number;
+  offline: number;
+  unknown: number;
+};
+
+export type CreateNetworkProbeRequest = {
+  name: string;
+  ip_address: string;
+  location?: string;
+  interval_seconds?: number;
+  timeout_ms?: number;
+  active?: boolean;
+};
+
+export type UpdateNetworkProbeRequest = {
+  name?: string;
+  ip_address?: string;
+  location?: string;
+  interval_seconds?: number;
+  timeout_ms?: number;
+  active?: boolean;
+};
+
+export type NetworkProbeCheck = {
+  id: number;
+  probe_id: number;
+  status: NetworkProbeStatus | string;
+  latency_ms?: number | null;
+  error_message?: string | null;
+  checked_at: string;
+};
+
 export type Job = {
   id: number;
   name: string;

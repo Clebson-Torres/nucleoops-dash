@@ -143,6 +143,32 @@
   gap: 12px;
 }
 
+.three-col-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.stat .label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-bottom: 6px;
+}
+
 .compact-list {
   display: grid;
   gap: 10px;
@@ -479,8 +505,10 @@ th {
   }
 
   .two-col-grid,
+  .three-col-grid,
   .detail-grid,
-  .form-grid {
+  .form-grid,
+  .stat-grid {
     grid-template-columns: 1fr;
   }
 }
