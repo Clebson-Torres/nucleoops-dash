@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { Card } from "../../components/ui/Card";
@@ -40,7 +40,7 @@ export function AgentsPage() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   const [pingHost, setPingHost] = useState("8.8.8.8");
-  const [speedUrl, setSpeedUrl] = useState("http://speedtest.tele2.net/100MB.zip");
+  const [speedUrl, setSpeedUrl] = useState("https://speed.cloudflare.com/__down?bytes=25000000");
   const [serviceName, setServiceName] = useState("Spooler");
   const [serviceOperation, setServiceOperation] = useState<"status" | "start" | "stop" | "restart">("restart");
   const [packageIdentifier, setPackageIdentifier] = useState("");
@@ -65,6 +65,23 @@ export function AgentsPage() {
   const selectedAgent = useMemo(() => {
     return (agentsQuery.data ?? []).find((item) => item.agent_id === selectedAgentId) ?? null;
   }, [agentsQuery.data, selectedAgentId]);
+  const selectedAgentIsWindows = isWindowsAgent(selectedAgent);
+
+  const allowedLogSources = useMemo<
+    Array<"event_system" | "event_application" | "event_security" | "journal">
+  >(
+    () =>
+      selectedAgentIsWindows
+        ? ["event_system", "event_application", "event_security"]
+        : ["journal"],
+    [selectedAgentIsWindows]
+  );
+
+  useEffect(() => {
+    if (!allowedLogSources.includes(logSource)) {
+      setLogSource(allowedLogSources[0]);
+    }
+  }, [allowedLogSources, logSource]);
 
   const selectedAgentDetailsQuery = useQuery({
     queryKey: ["agent-details", selectedAgentId, headers.accessToken],
@@ -328,7 +345,7 @@ export function AgentsPage() {
                   URL (speed test)
                   <input value={speedUrl} onChange={(event) => setSpeedUrl(event.target.value)} />
                 </label>
-                <p className="small">Sugestao para teste sem TLS: http://speedtest.tele2.net/100MB.zip</p>
+                <p className="small">Sugestao: https://speed.cloudflare.com/__down?bytes=25000000 ou URL HTTP interna da sua rede.</p>
                 <button type="button" onClick={() => void runSpeedTest()}>Executar speed test</button>
               </div>
             </div>
@@ -381,10 +398,9 @@ export function AgentsPage() {
                 <label>
                   Fonte
                   <select value={logSource} onChange={(event) => setLogSource(event.target.value as "event_system" | "event_application" | "event_security" | "journal")}>
-                    <option value="event_system">event_system</option>
-                    <option value="event_application">event_application</option>
-                    <option value="event_security">event_security</option>
-                    <option value="journal">journal</option>
+                    {allowedLogSources.map((source) => (
+                      <option key={source} value={source}>{source}</option>
+                    ))}
                   </select>
                 </label>
                 {logSource === "event_security" ? (
@@ -510,4 +526,8 @@ export function AgentsPage() {
     </div>
   );
 }
+
+
+
+
 

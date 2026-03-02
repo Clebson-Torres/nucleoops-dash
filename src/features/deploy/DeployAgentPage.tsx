@@ -86,7 +86,7 @@ function toLinuxRuntimeUrl(raw: string): { expr: string; needsHostDiscovery: boo
     }
     const port = parsed.port ? `:${parsed.port}` : "";
     return {
-      expr: `${parsed.protocol}//\${WIN_HOST_IP}${port}${parsed.pathname}${parsed.search}${parsed.hash}`,
+      expr: `${parsed.protocol}//<SERVER_IP>${port}${parsed.pathname}${parsed.search}${parsed.hash}`,
       needsHostDiscovery: true,
     };
   } catch {
@@ -105,22 +105,6 @@ function remapUrlToBase(rawUrl: string, baseUrl: string): string {
   } catch {
     return rawUrl;
   }
-}
-
-function linuxWslHostDetectSnippet(): string[] {
-  return [
-    "if grep -qi microsoft /proc/version 2>/dev/null || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then",
-    "  WIN_HOST_IP=\"$(ip route | awk '/^default/ { print $3; exit }')\"",
-    "  [ -n \"$WIN_HOST_IP\" ] || { echo \"Falha ao resolver o IP do host Windows (WSL).\"; exit 1; }",
-    "else",
-    "  echo \"SERVER_BASE_URL com localhost/127.0.0.1 so funciona em WSL. Em Linux VM use URL de rede (ex: http://192.168.x.x:8080).\"",
-    "  exit 1",
-    "fi",
-  ];
-}
-
-function linuxWslHostDetectOneLiner(): string {
-  return "if grep -qi microsoft /proc/version 2>/dev/null || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then WIN_HOST_IP=\"$(ip route | awk '/^default/ { print $3; exit }')\"; [ -n \"$WIN_HOST_IP\" ] || { echo \"Falha ao resolver o IP do host Windows (WSL).\"; exit 1; }; else echo \"SERVER_BASE_URL com localhost/127.0.0.1 so funciona em WSL. Em Linux VM use URL de rede (ex: http://192.168.x.x:8080).\"; exit 1; fi";
 }
 
 export function DeployAgentPage() {
@@ -206,11 +190,7 @@ export function DeployAgentPage() {
     const scriptUrl = toLinuxRuntimeUrl(`${effectiveServerBase}/downloads/agent/install/linux.sh`);
     const binaryUrl = toLinuxRuntimeUrl(normalizedArtifactUrl);
     const serverUrl = toLinuxRuntimeUrl(effectiveServerBase);
-    const needsHostDiscovery = scriptUrl.needsHostDiscovery || binaryUrl.needsHostDiscovery;
-    const hostDetect = needsHostDiscovery
-      ? `${linuxWslHostDetectOneLiner()}; `
-      : "";
-    return `${hostDetect}curl -fsSL "${scriptUrl.expr}" | sudo BINARY_URL="${binaryUrl.expr}" BINARY_SHA256="${linuxArtifact.sha256}" TENANT_TOKEN="${tenantToken.trim()}" SERVER_BASE_URL="${serverUrl.expr}" bash`;
+    return `curl -fsSL "${scriptUrl.expr}" | sudo BINARY_URL="${binaryUrl.expr}" BINARY_SHA256="${linuxArtifact.sha256}" TENANT_TOKEN="${tenantToken.trim()}" SERVER_BASE_URL="${serverUrl.expr}" bash`;
   }, [linuxArtifact, tenantToken, effectiveServerBase]);
 
   const linuxAutoHostMode = useMemo(() => {
@@ -265,13 +245,9 @@ export function DeployAgentPage() {
     const normalizedArtifactUrl = remapUrlToBase(linuxArtifact.url, effectiveServerBase);
     const server = toLinuxRuntimeUrl(effectiveServerBase);
     const binary = toLinuxRuntimeUrl(normalizedArtifactUrl);
-    const needsHostDiscovery = server.needsHostDiscovery || binary.needsHostDiscovery;
     return [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      ...(needsHostDiscovery
-        ? linuxWslHostDetectSnippet()
-        : []),
       `SERVER_BASE_URL="${server.expr}"`,
       `TENANT_TOKEN="${tenantToken.trim()}"`,
       `BINARY_URL="${binary.expr}"`,
@@ -540,8 +516,8 @@ export function DeployAgentPage() {
             </label>
             {linuxAutoHostMode ? (
               <p className="small">
-                Modo localhost detectado: em WSL o comando resolve o IP do host automaticamente; em Linux VM comum, use
-                Server base URL de rede (ex.: http://192.168.x.x:8080).
+                Modo localhost detectado: substitua <code>&lt;SERVER_IP&gt;</code> pelo IP de rede do servidor
+                (ex.: <code>192.168.1.107</code>) antes de executar em Linux/VM.
               </p>
             ) : null}
             <div className="row">
