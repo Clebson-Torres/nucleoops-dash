@@ -33,3 +33,31 @@ npm run test:e2e
 - Topbar login controls visible when session is absent
 - `/deploy` restricted message for non-admin
 - `/auth` password form render
+
+## E2E live operations (agents installed)
+Use this for real click simulation + command execution against installed agents.
+
+Required env vars:
+- `E2E_LIVE_ENABLED=1`
+- `E2E_LIVE_EMAIL=<supabase_admin_email>`
+- `E2E_LIVE_PASSWORD=<supabase_admin_password>`
+- `E2E_LIVE_AGENT_ID=<agent_id_from_agents_page>`
+- Optional: `E2E_LIVE_COMMAND=<command>` (default: `echo e2e-live`)
+
+Run:
+```powershell
+$env:E2E_LIVE_ENABLED="1"
+$env:E2E_LIVE_EMAIL="admin@empresa.com"
+$env:E2E_LIVE_PASSWORD="senha"
+$env:E2E_LIVE_AGENT_ID="nitrov15-windows"
+$env:E2E_LIVE_COMMAND="echo live-test"
+npm run test:e2e:live
+```
+
+Scenario:
+1. Login in topbar
+2. Navigate to `/jobs`
+3. Create `run_command` job
+4. Select real target agent
+5. Open `Ver execucoes`
+6. Wait until final status (`success|failed|timeout`)
